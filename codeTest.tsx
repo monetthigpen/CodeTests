@@ -21,6 +21,13 @@ export interface DropdownFieldProps {
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
 
+// Normalize any key to a string (Fluent v8 accepts string keys)
+const toKey = (k: string | number | null | undefined): string =>
+  k == null ? '' : String(k);
+
+const toKeyArray = (v: unknown): string[] =>
+  v == null ? [] : Array.isArray(v) ? v.map(toKey) : [toKey(v as string | number)];
+
 export default function DropdownField(props: DropdownFieldProps): JSX.Element {
   const {
     id,
@@ -48,41 +55,53 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     setIsDisabled(!!disabledProp);
   }, [requiredProp, disabledProp]);
 
-  const [selectedKeys, setSelectedKeys] = React.useState<(string | number)[]>([]);
+  // Keep internal selection as strings to satisfy Dropdown types
+  const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);   // for multi
+  const [selectedKey, setSelectedKey]   = React.useState<string | null>(null); // for single
+
   const [error, setError] = React.useState<string>('');
   const [touched, setTouched] = React.useState<boolean>(false);
 
-  const validate = React.useCallback(
-    (vals: (string | number)[]): string => {
-      if (isRequired && vals.length === 0) return REQUIRED_MSG;
-      return '';
-    },
-    [isRequired]
-  );
+  const validate = React.useCallback((): string => {
+    if (!isRequired) return '';
+    if (isMulti) return selectedKeys.length === 0 ? REQUIRED_MSG : '';
+    return !selectedKey ? REQUIRED_MSG : '';
+  }, [isRequired, isMulti, selectedKeys.length, selectedKey]);
 
-  const commitValue = React.useCallback(
-    (vals: (string | number)[]) => {
-      const err = validate(vals);
-      setError(err);
-      GlobalErrorHandle(id, err || null);
-      GlobalFormData(id, isMulti ? vals : vals[0] ?? '');
-    },
-    [id, isMulti, validate, GlobalErrorHandle, GlobalFormData]
-  );
+  const commitValue = React.useCallback(() => {
+    const err = validate();
+    setError(err);
+    GlobalErrorHandle(id, err || null);
+    GlobalFormData(id, isMulti ? selectedKeys : (selectedKey ?? ''));
+  }, [validate, GlobalErrorHandle, GlobalFormData, id, isMulti, selectedKeys, selectedKey]);
 
-  // Prefill starter / FormData
+  // Prefill: New (8) vs Edit/View
   React.useEffect(() => {
-    const normalize = (v: any): (string | number)[] =>
-      v == null ? [] : Array.isArray(v) ? v : [v];
-
     if (FormMode === 8) {
-      const initial = normalize(starterValue);
-      setSelectedKeys(initial);
-      GlobalFormData(id, isMulti ? initial : initial[0] ?? '');
+      if (isMulti) {
+        const initArr = toKeyArray(starterValue);
+        setSelectedKeys(initArr);
+        setSelectedKey(null);
+        GlobalFormData(id, initArr);
+      } else {
+        const init = starterValue != null ? toKey(starterValue as any) : '';
+        setSelectedKey(init || null);
+        setSelectedKeys([]);
+        GlobalFormData(id, init || '');
+      }
     } else {
-      const existing = normalize(FormData ? (FormData as any)[id] : undefined);
-      setSelectedKeys(existing);
-      GlobalFormData(id, isMulti ? existing : existing[0] ?? '');
+      const existing = (FormData ? (FormData as any)[id] : undefined);
+      if (isMulti) {
+        const arr = toKeyArray(existing);
+        setSelectedKeys(arr);
+        setSelectedKey(null);
+        GlobalFormData(id, arr);
+      } else {
+        const k = existing != null ? toKey(existing) : '';
+        setSelectedKey(k || null);
+        setSelectedKeys([]);
+        GlobalFormData(id, k || '');
+      }
     }
     setError('');
     setTouched(false);
@@ -90,39 +109,33 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [FormMode, starterValue, id, isMulti]);
 
-  // Handlers
   const handleChange = (
     _e: React.FormEvent<HTMLDivElement>,
     option?: IDropdownOption
   ) => {
     if (!option) return;
-
-    let next: (string | number)[] = [];
+    const k = toKey(option.key);
 
     if (isMulti) {
-      if (option.selected) {
-        next = [...selectedKeys, option.key];
-      } else {
-        next = selectedKeys.filter(k => k !== option.key);
-      }
+      const next = option.selected
+        ? [...selectedKeys, k]
+        : selectedKeys.filter(x => x !== k);
+      setSelectedKeys(next);
+      if (touched) setError(isRequired && next.length === 0 ? REQUIRED_MSG : '');
     } else {
-      next = [option.key];
+      setSelectedKey(k);
+      if (touched) setError(isRequired && !k ? REQUIRED_MSG : '');
     }
-
-    setSelectedKeys(next);
-    if (touched) setError(validate(next));
   };
 
   const handleBlur = () => {
     setTouched(true);
-    commitValue(selectedKeys);
+    commitValue();
   };
 
   const hasError = !!error;
 
-  const dropdownStyles: Partial<IDropdownStyles> = {
-    root: { width: '100%' }
-  };
+  const dropdownStyles: Partial<IDropdownStyles> = { root: { width: '100%' } };
 
   return (
     <Field
@@ -137,7 +150,10 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
         placeholder={placeholder}
         multiSelect={isMulti}
         disabled={isDisabled}
-        selectedKeys={selectedKeys}
+        // IMPORTANT: use the correct prop for each mode,
+        // and pass homogenous types (string[]) to satisfy TS
+        selectedKeys={isMulti ? selectedKeys : undefined}
+        selectedKey={!isMulti ? (selectedKey ?? undefined) : undefined}
         options={options}
         styles={dropdownStyles}
         onChange={handleChange}
@@ -146,4 +162,3 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     </Field>
   );
 }
-
