@@ -17,20 +17,20 @@ export interface DropdownFieldProps {
   fieldType?: string;
   className?: string;
   description?: string;
-  submitting?: boolean;
+  submitting?: boolean; // new boolean prop
 }
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
 
-// helpers
 const toKey = (k: unknown): string => (k == null ? '' : String(k));
+
 function normalizeToStringArray(input: unknown): string[] {
   if (input == null) return [];
   if (Array.isArray((input as any)?.results)) return ((input as any).results as unknown[]).map(toKey);
   if (Array.isArray(input)) {
     const arr = input as unknown[];
     if (arr.length && typeof arr[0] === 'object' && arr[0] !== null) {
-      return arr.map((o: any) => toKey(o?.Id ?? o?.id ?? o?.Key ?? o?.value ?? o)); // eslint-disable-line
+      return arr.map((o: any) => toKey(o?.Id ?? o?.id ?? o?.Key ?? o?.value ?? o));
     }
     return arr.map(toKey);
   }
@@ -38,12 +38,12 @@ function normalizeToStringArray(input: unknown): string[] {
     return input.split(';').map(s => toKey(s.trim())).filter(Boolean);
   }
   if (typeof input === 'object') {
-    const o: any = input; // eslint-disable-line
+    const o: any = input;
     return [toKey(o?.Id ?? o?.id ?? o?.Key ?? o?.value ?? o)];
   }
   return [toKey(input)];
 }
-const toKeyArray = (v: unknown): string[] => (v == null ? [] : Array.isArray(v) ? v.map(toKey) : [toKey(v)]);
+
 function clampToExisting(values: string[], opts: OptionItem[]): string[] {
   const allowed = new Set(opts.map(o => toKey(o.key)));
   return values.filter(v => allowed.has(v));
@@ -51,13 +51,23 @@ function clampToExisting(values: string[], opts: OptionItem[]): string[] {
 
 export default function DropdownField(props: DropdownFieldProps): JSX.Element {
   const {
-    id, displayName, starterValue, isRequired: requiredProp, disabled: disabledProp,
-    placeholder, multiSelect, multiselect, options, fieldType, className, description,
+    id,
+    displayName,
+    starterValue,
+    isRequired: requiredProp,
+    disabled: disabledProp,
+    placeholder,
+    multiSelect,
+    multiselect,
+    options,
+    fieldType,
+    className,
+    description,
+    submitting,
   } = props;
 
   const isMulti = !!(multiselect ?? multiSelect);
   const { FormData, GlobalFormData, FormMode, GlobalErrorHandle } = React.useContext(DynamicFormContext);
-  const isSubmitting = !!props.submitting;
 
   const [isRequired, setIsRequired] = React.useState<boolean>(!!requiredProp);
   const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabledProp);
@@ -66,24 +76,31 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
   const [error, setError] = React.useState<string>('');
   const [touched, setTouched] = React.useState<boolean>(false);
 
+  // react to disabled/required props and submitting flag
   React.useEffect(() => {
     setIsRequired(!!requiredProp);
-    setIsDisabled(!!disabledProp);
-  }, [requiredProp, disabledProp]);
 
-  // Prefill / Edit
+    if (submitting) {
+      // force disable while submitting is true
+      setIsDisabled(true);
+    } else {
+      setIsDisabled(!!disabledProp);
+    }
+  }, [requiredProp, disabledProp, submitting]);
+
+  // Prefill values
   React.useEffect(() => {
-    if (props.submitting === true) setIsDisabled(true);
-
     if (FormMode == 8) {
       if (isMulti) {
-        const initArr = clampToExisting(toKeyArray(starterValue), options);
+        const initArr = clampToExisting(
+          starterValue != null ? (Array.isArray(starterValue) ? starterValue.map(toKey) : [toKey(starterValue)]) : [],
+          options
+        );
         setSelectedKeys(initArr);
         setSelectedKey(null);
       } else {
         const init = starterValue != null ? toKey(starterValue) : '';
-        const clamped = clampToExisting(init ? [init] : [], options);
-        setSelectedKey(clamped[0] ?? null);
+        setSelectedKey(init || null);
         setSelectedKeys([]);
       }
     } else {
@@ -107,9 +124,9 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     setError('');
     setTouched(false);
     GlobalErrorHandle(id, null);
-  }, [FormData, FormMode, starterValue, options, props.submitting, fieldType, id, isMulti, GlobalErrorHandle]);
+  }, [FormData, FormMode, starterValue, options, fieldType, id, isMulti, GlobalErrorHandle]);
 
-  // validate + commit
+  // validation + commit
   const validate = React.useCallback((): string => {
     if (isRequired) {
       if (isMulti && selectedKeys.length === 0) return REQUIRED_MSG;
@@ -142,7 +159,6 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     commitValue();
   };
 
-  // ----- Force the trigger text to show the selection -----------------------
   const keyToText = React.useMemo(() => {
     const map = new Map<string, string>();
     for (const o of options) map.set(toKey(o.key), o.text);
@@ -150,13 +166,9 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
   }, [options]);
 
   const selectedOptions = isMulti ? selectedKeys : selectedKey ? [selectedKey] : [];
-  const displayText =
-    isMulti
-      ? (selectedKeys.length
-          ? selectedKeys.map(k => keyToText.get(k) ?? k).join(', ')
-          : '')
-      : (selectedKey ? (keyToText.get(selectedKey) ?? selectedKey) : '');
-
+  const displayText = isMulti
+    ? (selectedKeys.length ? selectedKeys.map(k => keyToText.get(k) ?? k).join(', ') : '')
+    : (selectedKey ? (keyToText.get(selectedKey) ?? selectedKey) : '');
   const effectivePlaceholder = displayText || placeholder;
 
   const hasError = !!error;
@@ -168,11 +180,11 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
       required={isRequired}
       validationMessage={hasError ? error : undefined}
       validationState={hasError ? 'error' : undefined}
-      submitting={isSubmitting}
+      submitting={!!submitting}
     >
       <Dropdown
         id={id}
-        placeholder={effectivePlaceholder}   // <<< show selection in the trigger
+        placeholder={effectivePlaceholder}
         multiselect={isMulti}
         disabled={isDisabled}
         inlinePopup
