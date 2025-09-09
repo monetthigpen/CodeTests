@@ -1,7 +1,9 @@
 import * as React from 'react';
-import { Dropdown, IDropdownOption } from '@fluentui/react';
-import { Field } from '@fluentui/react-components';
+import { Field, Dropdown, Option } from '@fluentui/react-components';
 import { DynamicFormContext } from './DynamicFormContext';
+
+// Minimal option shape compatible with your existing data
+type OptionItem = { key: string | number; text: string };
 
 export interface DropdownFieldProps {
   id: string;
@@ -10,18 +12,18 @@ export interface DropdownFieldProps {
   isRequired?: boolean;
   disabled?: boolean;
   placeholder?: string;
-  multiSelect?: boolean;   // main prop
-  multiselect?: boolean;   // alias
-  options: IDropdownOption[];
+  multiSelect?: boolean;   // v8-style name
+  multiselect?: boolean;   // v9 prop name
+  options: OptionItem[];
   fieldType?: string;
   className?: string;
   description?: string;
-  submitting?: boolean;    // new prop we use instead of context
+  submitting?: boolean;
 }
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
 
-// Normalize any key to a string (Fluent v8 accepts string keys)
+// Normalize any key to a string
 const toKey = (k: string | number | null | undefined): string =>
   k == null ? '' : String(k);
 
@@ -43,29 +45,69 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     description,
   } = props;
 
+  // v9 prop is "multiselect"; keep support for either spelling
   const isMulti = !!(multiselect ?? multiSelect);
 
-  // IMPORTANT: do NOT pull isSubmitting from context anymore
   const { FormData, GlobalFormData, FormMode, GlobalErrorHandle } =
     React.useContext(DynamicFormContext);
 
-  // local flag derived from prop (keeps your JSX `submitting={isSubmitting}`)
+  // derive submitting from prop (not from context)
   const isSubmitting = !!props.submitting;
 
   const [isRequired, setIsRequired] = React.useState<boolean>(!!requiredProp);
   const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabledProp);
+
+  // Keep internal selection as strings for consistency
+  const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);      // multi
+  const [selectedKey, setSelectedKey] = React.useState<string | null>(null); // single
+
+  const [error, setError] = React.useState<string>('');
+  const [touched, setTouched] = React.useState<boolean>(false);
 
   React.useEffect(() => {
     setIsRequired(!!requiredProp);
     setIsDisabled(!!disabledProp);
   }, [requiredProp, disabledProp]);
 
-  // Keep internal selection as strings to satisfy Dropdown types
-  const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);      // for multi
-  const [selectedKey, setSelectedKey] = React.useState<string | null>(null); // for single
+  // Prefill: New (8) vs Edit/View — NO GlobalFormData writes here
+  React.useEffect(() => {
+    if (FormMode == 8) {
+      if (isMulti) {
+        const initArr = toKeyArray(starterValue);
+        setSelectedKeys(initArr);
+        setSelectedKey(null);
+      } else {
+        const init = starterValue != null ? toKey(starterValue as any) : ''; // eslint-disable-line @typescript-eslint/no-explicit-any
+        setSelectedKey(init || null);
+        setSelectedKeys([]);
+      }
+    } else {
+      const existing = (FormData
+        ? (props.fieldType === 'lookup'
+            ? (FormData as any)[`${id}Id`]
+            : (FormData as any)[id])
+        : undefined) as unknown; // eslint-disable-line @typescript-eslint/no-explicit-any
 
-  const [error, setError] = React.useState<string>('');
-  const [touched, setTouched] = React.useState<boolean>(false);
+      if (isMulti) {
+        const arr = toKeyArray(existing);
+        setSelectedKeys(arr);
+        setSelectedKey(null);
+      } else {
+        const k = existing != null ? toKey(existing as any) : ''; // eslint-disable-line @typescript-eslint/no-explicit-any
+        setSelectedKey(k || null);
+        setSelectedKeys([]);
+      }
+    }
+
+    if (props.submitting === true) {
+      setIsDisabled(true);
+    }
+
+    setError('');
+    setTouched(false);
+    GlobalErrorHandle(id, null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.submitting]);
 
   const validate = React.useCallback((): string => {
     if (isRequired) {
@@ -78,65 +120,25 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
   const commitValue = React.useCallback(() => {
     const err = validate();
     setError(err);
+    // Commit to your external form state on blur/change as before
     GlobalFormData(id, isMulti ? selectedKeys : selectedKey);
     GlobalErrorHandle(id, err);
   }, [validate, GlobalFormData, GlobalErrorHandle, id, isMulti, selectedKeys, selectedKey]);
 
-  // Prefill: New (8) vs Edit/View
-  React.useEffect(() => {
-    if (FormMode == 8) {
-      if (isMulti) {
-        const initArr = toKeyArray(starterValue);
-        setSelectedKeys(initArr);
-        setSelectedKey(null);
-        // GlobalFormData removed here
-      } else {
-        const init = starterValue != null ? toKey(starterValue as any) : ''; // eslint-disable-line @typescript-eslint/no-explicit-any
-        setSelectedKey(init || null);
-        setSelectedKeys([]);
-        // GlobalFormData removed here
-      }
-    } else {
-      const existing = (FormData ? (props.fieldType=="lookup"? (FormData as any)[`${id}Id`] : (FormData as any)[id]) : undefined); // eslint-disable-line @typescript-eslint/no-explicit-any
-      if (isMulti) {
-        const arr = toKeyArray(existing);
-        setSelectedKeys(arr);
-        setSelectedKey(null);
-        // GlobalFormData removed here
-      } else {
-        const k = existing != null ? toKey(existing) : '';
-        setSelectedKey(k || null);
-        setSelectedKeys([]);
-        // GlobalFormData removed here
-      }
-    }
-
-    if (props.submitting === true) { // disable while submitting
-      setIsDisabled(true);
-    }
-
-    setError('');
-    setTouched(false);
-    GlobalErrorHandle(id, null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.submitting]); // <-- include prop in deps
-
-  const handleChange = (
-    _e: React.FormEvent<HTMLElement | HTMLDivElement>,
-    option?: IDropdownOption
+  // v9 selection handler
+  const handleOptionSelect = (
+    _e: unknown,
+    data: { optionValue?: string | number; selectedOptions: (string | number)[] }
   ) => {
-    if (!option) return;
-    const k = toKey(option.key);
-
+    // v9 provides selectedOptions already; we still normalize to strings
     if (isMulti) {
-      const next = option.selected
-        ? [...selectedKeys, k]
-        : selectedKeys.filter(x => x !== k);
+      const next = (data.selectedOptions ?? []).map(toKey);
       setSelectedKeys(next);
       if (touched) setError(isRequired && next.length === 0 ? REQUIRED_MSG : '');
     } else {
-      setSelectedKey(k);
-      if (touched) setError(isRequired && !k ? REQUIRED_MSG : '');
+      const next = data.optionValue != null ? toKey(data.optionValue) : '';
+      setSelectedKey(next || null);
+      if (touched) setError(isRequired && !next ? REQUIRED_MSG : '');
     }
   };
 
@@ -147,8 +149,15 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
 
   const hasError = !!error;
 
-  // Cast to any to allow a custom 'submitting' prop on Field
+  // Cast to allow custom 'submitting' prop on Field per your requirement
   const FieldAny = Field as any;
+
+  // Build selectedOptions for v9
+  const selectedOptions = isMulti
+    ? selectedKeys
+    : selectedKey
+      ? [selectedKey]
+      : [];
 
   return (
     <FieldAny
@@ -156,24 +165,31 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
       required={isRequired}
       validationMessage={hasError ? error : undefined}
       validationState={hasError ? 'error' : undefined}
-      submitting={isSubmitting}           // keep your attribute
+      submitting={isSubmitting}
     >
       <Dropdown
         id={id}
         placeholder={placeholder}
-        multiSelect={isMulti}
+        multiselect={isMulti}
         disabled={isDisabled}
-        inlinePopup={true}
-        // IMPORTANT: use the correct prop for each mode,
-        selectedKeys={isMulti ? selectedKeys : undefined}
-        selectedKey={!isMulti ? (selectedKey ?? undefined) : undefined}
-        options={options}
-        onChange={handleChange}
+        inlinePopup
+        selectedOptions={selectedOptions}
+        onOptionSelect={handleOptionSelect}
         onBlur={handleBlur}
         className={className}
-      />
-      {description !== '' && <div className="descriptionText">{description}</div>}
+      >
+        {options.map(o => (
+          <Option key={toKey(o.key)} value={toKey(o.key)}>
+            {o.text}
+          </Option>
+        ))}
+      </Dropdown>
+
+      {description !== '' && (
+        <div className="descriptionText">{description}</div>
+      )}
     </FieldAny>
   );
 }
+
 
