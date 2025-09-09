@@ -16,7 +16,7 @@ export interface DropdownFieldProps {
   fieldType?: string;
   className?: string;
   description?: string;
-  submitting?: boolean;    // <— added
+  submitting?: boolean;    // new prop we use instead of context
 }
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
@@ -39,16 +39,18 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     multiSelect,
     multiselect,
     options,
-    //fieldType,
     className,
     description,
   } = props;
 
   const isMulti = !!(multiselect ?? multiSelect);
 
-  // NOTE: removed isSubmitting from here
+  // IMPORTANT: do NOT pull isSubmitting from context anymore
   const { FormData, GlobalFormData, FormMode, GlobalErrorHandle } =
     React.useContext(DynamicFormContext);
+
+  // local flag derived from prop (keeps your JSX `submitting={isSubmitting}`)
+  const isSubmitting = !!props.submitting;
 
   const [isRequired, setIsRequired] = React.useState<boolean>(!!requiredProp);
   const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabledProp);
@@ -109,7 +111,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
       }
     }
 
-    if (props.submitting === true) {
+    if (props.submitting === true) { // disable while submitting
       setIsDisabled(true);
     }
 
@@ -117,7 +119,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     setTouched(false);
     GlobalErrorHandle(id, null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.submitting]);
+  }, [props.submitting]); // <-- include prop in deps
 
   const handleChange = (
     _e: React.FormEvent<HTMLElement | HTMLDivElement>,
@@ -145,20 +147,23 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
 
   const hasError = !!error;
 
+  // Cast to any to allow a custom 'submitting' prop on Field
+  const FieldAny = Field as any;
+
   return (
-    <Field
+    <FieldAny
       label={displayName}
       required={isRequired}
       validationMessage={hasError ? error : undefined}
       validationState={hasError ? 'error' : undefined}
-      submitting={!!props.submitting}            // <— use prop, not context
+      submitting={isSubmitting}           // keep your attribute
     >
       <Dropdown
         id={id}
         placeholder={placeholder}
         multiSelect={isMulti}
         disabled={isDisabled}
-        inlinePopup={true}                        // <— set true
+        inlinePopup={true}
         // IMPORTANT: use the correct prop for each mode,
         selectedKeys={isMulti ? selectedKeys : undefined}
         selectedKey={!isMulti ? (selectedKey ?? undefined) : undefined}
@@ -168,6 +173,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
         className={className}
       />
       {description !== '' && <div className="descriptionText">{description}</div>}
-    </Field>
+    </FieldAny>
   );
 }
+
