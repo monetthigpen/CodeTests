@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Field, Dropdown, Option } from '@fluentui/react-components';
 import { DynamicFormContext } from './DynamicFormContext';
 
-// Minimal option shape compatible with your existing data
+// Minimal option shape compatible with your data
 type OptionItem = { key: string | number; text: string };
 
 export interface DropdownFieldProps {
@@ -23,12 +23,36 @@ export interface DropdownFieldProps {
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
 
-// Normalize any key to a string
+// ---- helpers ---------------------------------------------------------------
+
 const toKey = (k: string | number | null | undefined): string =>
   k == null ? '' : String(k);
 
+/** Accepts many backend shapes and returns array<string> of option keys */
+function normalizeToStringArray(input: unknown): string[] {
+  if (input == null) return [];
+  // { results: [...] }
+  // @ts-ignore
+  if (Array.isArray((input as any).results)) {
+    // @ts-ignore
+    return (input as any).results.map(toKey);
+  }
+  // Already an array
+  if (Array.isArray(input)) {
+    return (input as (string | number)[]).map(toKey);
+  }
+  // Semicolon-delimited "1;2;3"
+  if (typeof input === 'string' && input.includes(';')) {
+    return input.split(';').map(s => toKey(s.trim())).filter(Boolean);
+  }
+  // Single value
+  return [toKey(input)];
+}
+
 const toKeyArray = (v: unknown): string[] =>
   v == null ? [] : Array.isArray(v) ? v.map(toKey) : [toKey(v as string | number)];
+
+// ---------------------------------------------------------------------------
 
 export default function DropdownField(props: DropdownFieldProps): JSX.Element {
   const {
@@ -41,23 +65,21 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     multiSelect,
     multiselect,
     options,
+    fieldType,
     className,
     description,
   } = props;
 
-  // v9 prop is "multiselect"; keep support for either spelling
   const isMulti = !!(multiselect ?? multiSelect);
 
   const { FormData, GlobalFormData, FormMode, GlobalErrorHandle } =
     React.useContext(DynamicFormContext);
 
-  // derive submitting from prop (not from context)
   const isSubmitting = !!props.submitting;
 
   const [isRequired, setIsRequired] = React.useState<boolean>(!!requiredProp);
   const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabledProp);
 
-  // Keep internal selection as strings for consistency
   const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);      // multi
   const [selectedKey, setSelectedKey] = React.useState<string | null>(null); // single
 
@@ -69,9 +91,11 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     setIsDisabled(!!disabledProp);
   }, [requiredProp, disabledProp]);
 
-  // Prefill: New (8) vs Edit/View — NO GlobalFormData writes here
+  // ---- Prefill (Edit/View support) ----------------------------------------
+  // Re-run when FormData/FormMode/starterValue/submitting change so edit forms populate
   React.useEffect(() => {
     if (FormMode == 8) {
+      // New form: use starterValue
       if (isMulti) {
         const initArr = toKeyArray(starterValue);
         setSelectedKeys(initArr);
@@ -82,19 +106,25 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
         setSelectedKeys([]);
       }
     } else {
-      const existing = (FormData
-        ? (props.fieldType === 'lookup'
-            ? (FormData as any)[`${id}Id`]
-            : (FormData as any)[id])
-        : undefined) as unknown; // eslint-disable-line @typescript-eslint/no-explicit-any
+      // Edit/View: derive from FormData in whatever shape it’s coming
+      const raw =
+        FormData
+          ? (fieldType === 'lookup'
+              ? // e.g., SharePoint lookup stores numeric id in `${id}Id`
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (FormData as any)[`${id}Id`]
+              : // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (FormData as any)[id])
+          : undefined;
 
       if (isMulti) {
-        const arr = toKeyArray(existing);
+        const arr = normalizeToStringArray(raw);
         setSelectedKeys(arr);
         setSelectedKey(null);
       } else {
-        const k = existing != null ? toKey(existing as any) : ''; // eslint-disable-line @typescript-eslint/no-explicit-any
-        setSelectedKey(k || null);
+        const arr = normalizeToStringArray(raw);
+        const first = arr.length ? arr[0] : '';
+        setSelectedKey(first || null);
         setSelectedKeys([]);
       }
     }
@@ -106,9 +136,10 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     setError('');
     setTouched(false);
     GlobalErrorHandle(id, null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.submitting]);
+    // include FormData & FormMode so edits populate when data loads/changes
+  }, [FormData, FormMode, starterValue, props.submitting, fieldType, id, isMulti, GlobalErrorHandle]);
 
+  // ---- Validation / Commit -------------------------------------------------
   const validate = React.useCallback((): string => {
     if (isRequired) {
       if (isMulti && selectedKeys.length === 0) return REQUIRED_MSG;
@@ -120,7 +151,6 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
   const commitValue = React.useCallback(() => {
     const err = validate();
     setError(err);
-    // Commit to your external form state on blur/change as before
     GlobalFormData(id, isMulti ? selectedKeys : selectedKey);
     GlobalErrorHandle(id, err);
   }, [validate, GlobalFormData, GlobalErrorHandle, id, isMulti, selectedKeys, selectedKey]);
@@ -130,7 +160,6 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     _e: unknown,
     data: { optionValue?: string | number; selectedOptions: (string | number)[] }
   ) => {
-    // v9 provides selectedOptions already; we still normalize to strings
     if (isMulti) {
       const next = (data.selectedOptions ?? []).map(toKey);
       setSelectedKeys(next);
@@ -149,10 +178,9 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
 
   const hasError = !!error;
 
-  // Cast to allow custom 'submitting' prop on Field per your requirement
+  // allow custom 'submitting' prop on Field per your requirement
   const FieldAny = Field as any;
 
-  // Build selectedOptions for v9
   const selectedOptions = isMulti
     ? selectedKeys
     : selectedKey
@@ -191,5 +219,3 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     </FieldAny>
   );
 }
-
-
