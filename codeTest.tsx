@@ -1,10 +1,6 @@
 import * as React from 'react';
-import {
-  Dropdown,
-  IDropdownOption,
-  IDropdownStyles
-} from '@fluentui/react';
-import { Field, useId } from '@fluentui/react-components';
+import { Dropdown, IDropdownOption } from '@fluentui/react';
+import { Field } from '@fluentui/react-components';
 import { DynamicFormContext } from './DynamicFormContext';
 
 export interface DropdownFieldProps {
@@ -14,9 +10,13 @@ export interface DropdownFieldProps {
   isRequired?: boolean;
   disabled?: boolean;
   placeholder?: string;
-  multiselect?: boolean;  // main prop
-  multiSelect?: boolean;  // alias
+  multiSelect?: boolean;   // main prop
+  multiselect?: boolean;   // alias
   options: IDropdownOption[];
+  fieldType?: string;
+  className?: string;
+  description?: string;
+  submitting?: boolean;
 }
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
@@ -36,81 +36,86 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     isRequired: requiredProp,
     disabled: disabledProp,
     placeholder,
-    multiselect,
     multiSelect,
-    options
+    multiselect,
+    options,
+    //fieldType,
+    className,
+    description,
   } = props;
 
   const isMulti = !!(multiselect ?? multiSelect);
 
-  const { FormData, GlobalFormData, FormMode, GlobalErrorHandle } =
+  const { FormData, GlobalFormData, FormMode, GlobalErrorHandle, isSubmitting } =
     React.useContext(DynamicFormContext);
-
-  const inputId = useId('dropdown');
 
   const [isRequired, setIsRequired] = React.useState<boolean>(!!requiredProp);
   const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabledProp);
+
   React.useEffect(() => {
     setIsRequired(!!requiredProp);
     setIsDisabled(!!disabledProp);
   }, [requiredProp, disabledProp]);
 
   // Keep internal selection as strings to satisfy Dropdown types
-  const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);   // for multi
-  const [selectedKey, setSelectedKey]   = React.useState<string | null>(null); // for single
+  const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);      // for multi
+  const [selectedKey, setSelectedKey] = React.useState<string | null>(null); // for single
 
   const [error, setError] = React.useState<string>('');
   const [touched, setTouched] = React.useState<boolean>(false);
 
   const validate = React.useCallback((): string => {
-    if (!isRequired) return '';
-    if (isMulti) return selectedKeys.length === 0 ? REQUIRED_MSG : '';
-    return !selectedKey ? REQUIRED_MSG : '';
-  }, [isRequired, isMulti, selectedKeys.length, selectedKey]);
+    if (isRequired) {
+      if (isMulti && selectedKeys.length === 0) return REQUIRED_MSG;
+      if (!isMulti && !selectedKey) return REQUIRED_MSG;
+    }
+    return '';
+  }, [isRequired, isMulti, selectedKeys, selectedKey]);
 
   const commitValue = React.useCallback(() => {
     const err = validate();
     setError(err);
-    GlobalErrorHandle(id, err || null);
-    GlobalFormData(id, isMulti ? selectedKeys : (selectedKey ?? ''));
-  }, [validate, GlobalErrorHandle, GlobalFormData, id, isMulti, selectedKeys, selectedKey]);
+    GlobalFormData(id, isMulti ? selectedKeys : selectedKey);
+    GlobalErrorHandle(id, err);
+  }, [validate, GlobalFormData, GlobalErrorHandle, id, isMulti, selectedKeys, selectedKey]);
 
   // Prefill: New (8) vs Edit/View
   React.useEffect(() => {
-    if (FormMode === 8) {
+    if (FormMode == 8) {
       if (isMulti) {
         const initArr = toKeyArray(starterValue);
         setSelectedKeys(initArr);
         setSelectedKey(null);
-        GlobalFormData(id, initArr);
       } else {
-        const init = starterValue != null ? toKey(starterValue as any) : '';
+        const init = starterValue != null ? toKey(starterValue as any) : ''; // eslint-disable-line @typescript-eslint/no-explicit-any
         setSelectedKey(init || null);
         setSelectedKeys([]);
-        GlobalFormData(id, init || '');
       }
     } else {
-      const existing = (FormData ? (FormData as any)[id] : undefined);
+      const existing = (FormData ? (props.fieldType=="lookup"? (FormData as any)[`${id}Id`] : (FormData as any)[id]) : undefined); // eslint-disable-line @typescript-eslint/no-explicit-any
       if (isMulti) {
         const arr = toKeyArray(existing);
         setSelectedKeys(arr);
         setSelectedKey(null);
-        GlobalFormData(id, arr);
       } else {
         const k = existing != null ? toKey(existing) : '';
         setSelectedKey(k || null);
         setSelectedKeys([]);
-        GlobalFormData(id, k || '');
       }
     }
+
+    if (props.submitting === true) {
+      setIsDisabled(true);
+    }
+
     setError('');
     setTouched(false);
     GlobalErrorHandle(id, null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [FormMode, starterValue, id, isMulti]);
+  }, [props.submitting]);
 
   const handleChange = (
-    _e: React.FormEvent<HTMLDivElement>,
+    _e: React.FormEvent<HTMLElement | HTMLDivElement>,
     option?: IDropdownOption
   ) => {
     if (!option) return;
@@ -135,30 +140,29 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
 
   const hasError = !!error;
 
-  const dropdownStyles: Partial<IDropdownStyles> = { root: { width: '100%' } };
-
   return (
     <Field
       label={displayName}
       required={isRequired}
       validationMessage={hasError ? error : undefined}
       validationState={hasError ? 'error' : undefined}
-      size="medium"
+      submitting={isSubmitting}
     >
       <Dropdown
-        id={inputId}
+        id={id}
         placeholder={placeholder}
         multiSelect={isMulti}
         disabled={isDisabled}
+        inlinePopup={true}
         // IMPORTANT: use the correct prop for each mode,
-        // and pass homogenous types (string[]) to satisfy TS
         selectedKeys={isMulti ? selectedKeys : undefined}
         selectedKey={!isMulti ? (selectedKey ?? undefined) : undefined}
         options={options}
-        styles={dropdownStyles}
         onChange={handleChange}
         onBlur={handleBlur}
+        className={className}
       />
+      {description !== '' && <div className="descriptionText">{description}</div>}
     </Field>
   );
 }
