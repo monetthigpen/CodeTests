@@ -2,7 +2,6 @@ import * as React from 'react';
 import { Field, Dropdown, Option } from '@fluentui/react-components';
 import { DynamicFormContext } from './DynamicFormContext';
 
-// Minimal option shape compatible with your data
 type OptionItem = { key: string | number; text: string };
 
 export interface DropdownFieldProps {
@@ -12,10 +11,10 @@ export interface DropdownFieldProps {
   isRequired?: boolean;
   disabled?: boolean;
   placeholder?: string;
-  multiSelect?: boolean;   // v8-style name
-  multiselect?: boolean;   // v9 prop name
+  multiSelect?: boolean;
+  multiselect?: boolean;
   options: OptionItem[];
-  fieldType?: string;      // e.g., "lookup"
+  fieldType?: string;
   className?: string;
   description?: string;
   submitting?: boolean;
@@ -23,86 +22,47 @@ export interface DropdownFieldProps {
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
 
-// ---------- helpers ---------------------------------------------------------
-
-// Accept anything and coerce to string safely
+// helpers
 const toKey = (k: unknown): string => (k == null ? '' : String(k));
-
-/** Accepts many backend shapes and returns array<string> of option keys */
 function normalizeToStringArray(input: unknown): string[] {
   if (input == null) return [];
-
-  // { results: [...] }
-  if (Array.isArray((input as any)?.results)) {
-    return ((input as any).results as unknown[]).map(toKey);
-  }
-
-  // Array of primitives or objects
+  if (Array.isArray((input as any)?.results)) return ((input as any).results as unknown[]).map(toKey);
   if (Array.isArray(input)) {
     const arr = input as unknown[];
-    // If objects like [{ Id: 3 }, { Id: 5 }]
-    if (arr.length > 0 && typeof arr[0] === 'object' && arr[0] !== null) {
-      return arr.map((o: any) => toKey(o?.Id ?? o?.id ?? o?.Key ?? o?.value ?? o)); // eslint-disable-line @typescript-eslint/no-explicit-any
+    if (arr.length && typeof arr[0] === 'object' && arr[0] !== null) {
+      return arr.map((o: any) => toKey(o?.Id ?? o?.id ?? o?.Key ?? o?.value ?? o)); // eslint-disable-line
     }
     return arr.map(toKey);
   }
-
-  // Semicolon-delimited "1;2;3"
   if (typeof input === 'string' && input.includes(';')) {
     return input.split(';').map(s => toKey(s.trim())).filter(Boolean);
   }
-
-  // Single object like { Id: 3, Title: 'x' }
   if (typeof input === 'object') {
-    const o: any = input; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const o: any = input; // eslint-disable-line
     return [toKey(o?.Id ?? o?.id ?? o?.Key ?? o?.value ?? o)];
   }
-
-  // Single primitive
   return [toKey(input)];
 }
-
-const toKeyArray = (v: unknown): string[] =>
-  v == null ? [] : Array.isArray(v) ? v.map(toKey) : [toKey(v)];
-
-// Ensure the selected values actually exist in options (v9 shows only values with a matching Option)
+const toKeyArray = (v: unknown): string[] => (v == null ? [] : Array.isArray(v) ? v.map(toKey) : [toKey(v)]);
 function clampToExisting(values: string[], opts: OptionItem[]): string[] {
-  if (!values.length) return values;
   const allowed = new Set(opts.map(o => toKey(o.key)));
   return values.filter(v => allowed.has(v));
 }
 
-// ---------------------------------------------------------------------------
-
 export default function DropdownField(props: DropdownFieldProps): JSX.Element {
   const {
-    id,
-    displayName,
-    starterValue,
-    isRequired: requiredProp,
-    disabled: disabledProp,
-    placeholder,
-    multiSelect,
-    multiselect,
-    options,
-    fieldType,
-    className,
-    description,
+    id, displayName, starterValue, isRequired: requiredProp, disabled: disabledProp,
+    placeholder, multiSelect, multiselect, options, fieldType, className, description,
   } = props;
 
   const isMulti = !!(multiselect ?? multiSelect);
-
-  const { FormData, GlobalFormData, FormMode, GlobalErrorHandle } =
-    React.useContext(DynamicFormContext);
-
+  const { FormData, GlobalFormData, FormMode, GlobalErrorHandle } = React.useContext(DynamicFormContext);
   const isSubmitting = !!props.submitting;
 
   const [isRequired, setIsRequired] = React.useState<boolean>(!!requiredProp);
   const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabledProp);
-
-  const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);      // multi
-  const [selectedKey, setSelectedKey] = React.useState<string | null>(null); // single
-
+  const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);
+  const [selectedKey, setSelectedKey] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string>('');
   const [touched, setTouched] = React.useState<boolean>(false);
 
@@ -111,35 +71,27 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     setIsDisabled(!!disabledProp);
   }, [requiredProp, disabledProp]);
 
-  // ---------- Prefill (Edit/View + wait for data/options) -------------------
+  // Prefill / Edit
   React.useEffect(() => {
-    // Disable while submitting
-    if (props.submitting === true) {
-      setIsDisabled(true);
-    }
-
-    const ensureInOptions = (vals: string[]) => clampToExisting(vals, options);
+    if (props.submitting === true) setIsDisabled(true);
 
     if (FormMode == 8) {
-      // New form: use starterValue
       if (isMulti) {
-        const initArr = ensureInOptions(toKeyArray(starterValue));
+        const initArr = clampToExisting(toKeyArray(starterValue), options);
         setSelectedKeys(initArr);
         setSelectedKey(null);
       } else {
         const init = starterValue != null ? toKey(starterValue) : '';
-        const clamped = ensureInOptions(init ? [init] : []);
+        const clamped = clampToExisting(init ? [init] : [], options);
         setSelectedKey(clamped[0] ?? null);
         setSelectedKeys([]);
       }
     } else {
-      // Edit/View: derive from FormData, handling lookups + various shapes
-      const raw =
-        FormData
-          ? (fieldType === 'lookup'
-              ? (FormData as any)[`${id}Id`] // eslint-disable-line @typescript-eslint/no-explicit-any
-              : (FormData as any)[id])       // eslint-disable-line @typescript-eslint/no-explicit-any
-          : undefined;
+      const raw = FormData
+        ? (fieldType === 'lookup'
+            ? (FormData as any)[`${id}Id`]
+            : (FormData as any)[id])
+        : undefined;
 
       if (isMulti) {
         const arr = clampToExisting(normalizeToStringArray(raw), options);
@@ -147,8 +99,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
         setSelectedKey(null);
       } else {
         const arr = clampToExisting(normalizeToStringArray(raw), options);
-        const first = arr.length ? arr[0] : '';
-        setSelectedKey(first || null);
+        setSelectedKey(arr[0] ?? null);
         setSelectedKeys([]);
       }
     }
@@ -156,21 +107,9 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     setError('');
     setTouched(false);
     GlobalErrorHandle(id, null);
+  }, [FormData, FormMode, starterValue, options, props.submitting, fieldType, id, isMulti, GlobalErrorHandle]);
 
-    // IMPORTANT: include options and FormData so defaults populate when either arrives
-  }, [
-    FormData,
-    FormMode,
-    starterValue,
-    options,
-    props.submitting,
-    fieldType,
-    id,
-    isMulti,
-    GlobalErrorHandle,
-  ]);
-
-  // ---------- Validation / Commit ------------------------------------------
+  // validate + commit
   const validate = React.useCallback((): string => {
     if (isRequired) {
       if (isMulti && selectedKeys.length === 0) return REQUIRED_MSG;
@@ -186,11 +125,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     GlobalErrorHandle(id, err);
   }, [validate, GlobalFormData, GlobalErrorHandle, id, isMulti, selectedKeys, selectedKey]);
 
-  // v9 selection handler
-  const handleOptionSelect = (
-    _e: unknown,
-    data: { optionValue?: string | number; selectedOptions: (string | number)[] }
-  ) => {
+  const handleOptionSelect = (_: unknown, data: { optionValue?: string | number; selectedOptions: (string | number)[] }) => {
     if (isMulti) {
       const next = (data.selectedOptions ?? []).map(toKey);
       setSelectedKeys(next);
@@ -207,16 +142,25 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     commitValue();
   };
 
+  // ----- Force the trigger text to show the selection -----------------------
+  const keyToText = React.useMemo(() => {
+    const map = new Map<string, string>();
+    for (const o of options) map.set(toKey(o.key), o.text);
+    return map;
+  }, [options]);
+
+  const selectedOptions = isMulti ? selectedKeys : selectedKey ? [selectedKey] : [];
+  const displayText =
+    isMulti
+      ? (selectedKeys.length
+          ? selectedKeys.map(k => keyToText.get(k) ?? k).join(', ')
+          : '')
+      : (selectedKey ? (keyToText.get(selectedKey) ?? selectedKey) : '');
+
+  const effectivePlaceholder = displayText || placeholder;
+
   const hasError = !!error;
-
-  // Allow custom 'submitting' prop on Field (optional)
   const FieldAny = Field as any;
-
-  const selectedOptions = isMulti
-    ? selectedKeys
-    : selectedKey
-      ? [selectedKey]
-      : [];
 
   return (
     <FieldAny
@@ -228,7 +172,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     >
       <Dropdown
         id={id}
-        placeholder={placeholder}
+        placeholder={effectivePlaceholder}   // <<< show selection in the trigger
         multiselect={isMulti}
         disabled={isDisabled}
         inlinePopup
@@ -244,9 +188,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
         ))}
       </Dropdown>
 
-      {description !== '' && (
-        <div className="descriptionText">{description}</div>
-      )}
+      {description !== '' && <div className="descriptionText">{description}</div>}
     </FieldAny>
   );
 }
