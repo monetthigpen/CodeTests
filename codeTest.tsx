@@ -25,32 +25,35 @@ const REQUIRED_MSG = 'This is a required field and cannot be blank!';
 
 // ---- helpers ---------------------------------------------------------------
 
-const toKey = (k: string | number | null | undefined): string =>
+// Accept anything and coerce to string safely
+const toKey = (k: unknown): string =>
   k == null ? '' : String(k);
 
 /** Accepts many backend shapes and returns array<string> of option keys */
 function normalizeToStringArray(input: unknown): string[] {
   if (input == null) return [];
+
   // { results: [...] }
-  // @ts-ignore
   if (Array.isArray((input as any).results)) {
-    // @ts-ignore
-    return (input as any).results.map(toKey);
+    return ((input as any).results as unknown[]).map(toKey);
   }
+
   // Already an array
   if (Array.isArray(input)) {
-    return (input as (string | number)[]).map(toKey);
+    return (input as unknown[]).map(toKey);
   }
+
   // Semicolon-delimited "1;2;3"
   if (typeof input === 'string' && input.includes(';')) {
     return input.split(';').map(s => toKey(s.trim())).filter(Boolean);
   }
+
   // Single value
   return [toKey(input)];
 }
 
 const toKeyArray = (v: unknown): string[] =>
-  v == null ? [] : Array.isArray(v) ? v.map(toKey) : [toKey(v as string | number)];
+  v == null ? [] : Array.isArray(v) ? v.map(toKey) : [toKey(v)];
 
 // ---------------------------------------------------------------------------
 
@@ -92,7 +95,6 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
   }, [requiredProp, disabledProp]);
 
   // ---- Prefill (Edit/View support) ----------------------------------------
-  // Re-run when FormData/FormMode/starterValue/submitting change so edit forms populate
   React.useEffect(() => {
     if (FormMode == 8) {
       // New form: use starterValue
@@ -101,20 +103,17 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
         setSelectedKeys(initArr);
         setSelectedKey(null);
       } else {
-        const init = starterValue != null ? toKey(starterValue as any) : ''; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const init = starterValue != null ? toKey(starterValue) : '';
         setSelectedKey(init || null);
         setSelectedKeys([]);
       }
     } else {
-      // Edit/View: derive from FormData in whatever shape it’s coming
+      // Edit/View: derive from FormData
       const raw =
         FormData
           ? (fieldType === 'lookup'
-              ? // e.g., SharePoint lookup stores numeric id in `${id}Id`
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                (FormData as any)[`${id}Id`]
-              : // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                (FormData as any)[id])
+              ? (FormData as any)[`${id}Id`] // eslint-disable-line @typescript-eslint/no-explicit-any
+              : (FormData as any)[id])       // eslint-disable-line @typescript-eslint/no-explicit-any
           : undefined;
 
       if (isMulti) {
@@ -136,7 +135,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     setError('');
     setTouched(false);
     GlobalErrorHandle(id, null);
-    // include FormData & FormMode so edits populate when data loads/changes
+    // include dependencies so it updates when data loads/changes
   }, [FormData, FormMode, starterValue, props.submitting, fieldType, id, isMulti, GlobalErrorHandle]);
 
   // ---- Validation / Commit -------------------------------------------------
@@ -178,7 +177,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
 
   const hasError = !!error;
 
-  // allow custom 'submitting' prop on Field per your requirement
+  // allow custom 'submitting' prop on Field
   const FieldAny = Field as any;
 
   const selectedOptions = isMulti
@@ -219,3 +218,4 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     </FieldAny>
   );
 }
+
