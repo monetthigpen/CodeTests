@@ -16,7 +16,7 @@ export interface DropdownFieldProps {
   fieldType?: string;
   className?: string;
   description?: string;
-  submitting?: boolean;
+  submitting?: boolean;    // <— added
 }
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
@@ -46,7 +46,8 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
 
   const isMulti = !!(multiselect ?? multiSelect);
 
-  const { FormData, GlobalFormData, FormMode, GlobalErrorHandle, isSubmitting } =
+  // NOTE: removed isSubmitting from here
+  const { FormData, GlobalFormData, FormMode, GlobalErrorHandle } =
     React.useContext(DynamicFormContext);
 
   const [isRequired, setIsRequired] = React.useState<boolean>(!!requiredProp);
@@ -86,10 +87,12 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
         const initArr = toKeyArray(starterValue);
         setSelectedKeys(initArr);
         setSelectedKey(null);
+        // GlobalFormData removed here
       } else {
         const init = starterValue != null ? toKey(starterValue as any) : ''; // eslint-disable-line @typescript-eslint/no-explicit-any
         setSelectedKey(init || null);
         setSelectedKeys([]);
+        // GlobalFormData removed here
       }
     } else {
       const existing = (FormData ? (props.fieldType=="lookup"? (FormData as any)[`${id}Id`] : (FormData as any)[id]) : undefined); // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -97,10 +100,12 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
         const arr = toKeyArray(existing);
         setSelectedKeys(arr);
         setSelectedKey(null);
+        // GlobalFormData removed here
       } else {
         const k = existing != null ? toKey(existing) : '';
         setSelectedKey(k || null);
         setSelectedKeys([]);
+        // GlobalFormData removed here
       }
     }
 
@@ -146,14 +151,14 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
       required={isRequired}
       validationMessage={hasError ? error : undefined}
       validationState={hasError ? 'error' : undefined}
-      submitting={isSubmitting}
+      submitting={!!props.submitting}            // <— use prop, not context
     >
       <Dropdown
         id={id}
         placeholder={placeholder}
         multiSelect={isMulti}
         disabled={isDisabled}
-        inlinePopup={true}
+        inlinePopup={true}                        // <— set true
         // IMPORTANT: use the correct prop for each mode,
         selectedKeys={isMulti ? selectedKeys : undefined}
         selectedKey={!isMulti ? (selectedKey ?? undefined) : undefined}
