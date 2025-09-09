@@ -30,12 +30,10 @@ const toKey = (k: unknown): string => (k == null ? '' : String(k));
 function normalizeToStringArray(input: unknown): string[] {
   if (input == null) return [];
 
-  // { results: [...] }
   if (Array.isArray((input as any)?.results)) {
     return ((input as any).results as unknown[]).map(toKey);
   }
 
-  // Array of primitives or objects
   if (Array.isArray(input)) {
     const arr = input as unknown[];
     if (arr.length && typeof arr[0] === 'object' && arr[0] !== null) {
@@ -44,18 +42,15 @@ function normalizeToStringArray(input: unknown): string[] {
     return arr.map(toKey);
   }
 
-  // Semicolon-delimited "1;2;3"
   if (typeof input === 'string' && input.includes(';')) {
     return input.split(';').map(s => toKey(s.trim())).filter(Boolean);
   }
 
-  // Single object like { Id: 3, Title: 'x' }
   if (typeof input === 'object') {
     const o: any = input; // eslint-disable-line
     return [toKey(o?.Id ?? o?.id ?? o?.Key ?? o?.value ?? o)];
   }
 
-  // Single primitive
   return [toKey(input)];
 }
 
@@ -70,19 +65,21 @@ function useOptionMaps(options: OptionItem[]) {
   return React.useMemo(() => {
     const keyToText = new Map<string, string>();
     const keyToNumber = new Map<string, number>();
-    const numberToKey = new Map<number, string>();
 
     for (const o of options) {
       const keyStr = toKey(o.key);
       keyToText.set(keyStr, o.text);
-      // record numeric version if possible (for lookup commits)
-      const maybeNum = typeof o.key === 'number' ? o.key : Number.isFinite(Number(keyStr)) ? Number(keyStr) : NaN;
+      const maybeNum =
+        typeof o.key === 'number'
+          ? o.key
+          : Number.isFinite(Number(keyStr))
+          ? Number(keyStr)
+          : NaN;
       if (!Number.isNaN(maybeNum)) {
         keyToNumber.set(keyStr, maybeNum);
-        numberToKey.set(maybeNum, keyStr);
       }
     }
-    return { keyToText, keyToNumber, numberToKey };
+    return { keyToText, keyToNumber };
   }, [options]);
 }
 
@@ -118,7 +115,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
   const [error, setError] = React.useState<string>('');
   const [touched, setTouched] = React.useState<boolean>(false);
 
-  const { keyToText, keyToNumber, numberToKey } = useOptionMaps(options);
+  const { keyToText, keyToNumber } = useOptionMaps(options);
 
   // react to required/disabled/submitting flags
   React.useEffect(() => {
@@ -128,17 +125,18 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
 
   // ---------- Prefill (Edit/View + wait for data/options) -------------------
   React.useEffect(() => {
-    // Disable while submitting
     if (submitting === true) setIsDisabled(true);
 
     const ensureInOptions = (vals: string[]) => clampToExisting(vals, options);
 
     if (FormMode == 8) {
-      // New form: use starterValue (could be numbers or strings)
+      // New form: use starterValue
       if (isMulti) {
         const initArr = ensureInOptions(
           starterValue != null
-            ? (Array.isArray(starterValue) ? starterValue.map(toKey) : [toKey(starterValue)])
+            ? (Array.isArray(starterValue)
+                ? starterValue.map(toKey)
+                : [toKey(starterValue)])
             : []
         );
         setSelectedKeys(initArr);
@@ -153,12 +151,11 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
       // Edit/View
       const raw = FormData
         ? (isLookup
-            ? (FormData as any)[`${id}Id`] // preferred: numeric id(s)
-            : (FormData as any)[id])
+            ? (FormData as any)[`${id}Id`] // eslint-disable-line @typescript-eslint/no-explicit-any
+            : (FormData as any)[id])       // eslint-disable-line @typescript-eslint/no-explicit-any
         : undefined;
 
       if (isMulti) {
-        // raw might be number[], {results}, [{Id}], string[] etc.
         const arr = ensureInOptions(normalizeToStringArray(raw));
         setSelectedKeys(arr);
         setSelectedKey(null);
@@ -197,29 +194,50 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     const err = validate();
     setError(err);
 
-    // Build payloads:
     if (isLookup) {
-      // Send numeric IDs for lookups
+      // Send numeric IDs
       const valueForCommit = isMulti
-        ? selectedKeys.map(k => keyToNumber.get(k)).filter((n): n is number => typeof n === 'number')
-        : (selectedKey ? keyToNumber.get(selectedKey) ?? null : null);
+        ? selectedKeys
+            .map(k => keyToNumber.get(k))
+            .filter((n): n is number => typeof n === 'number')
+        : selectedKey
+        ? keyToNumber.get(selectedKey) ?? null
+        : null;
 
       GlobalFormData(id, valueForCommit);
     } else {
-      // Non-lookup: keep strings (but null when empty for single)
-      const valueForCommit = isMulti ? selectedKeys : (selectedKey ? selectedKey : null);
+      // Non-lookup: send string(s), but null when empty
+      const valueForCommit = isMulti
+        ? selectedKeys
+        : selectedKey
+        ? selectedKey
+        : null;
       GlobalFormData(id, valueForCommit);
     }
 
     GlobalErrorHandle(id, err);
-  }, [validate, GlobalFormData, GlobalErrorHandle, id, isMulti, isLookup, selectedKeys, selectedKey, keyToNumber]);
+  }, [
+    validate,
+    GlobalFormData,
+    GlobalErrorHandle,
+    id,
+    isMulti,
+    isLookup,
+    selectedKeys,
+    selectedKey,
+    keyToNumber,
+  ]);
 
   // v9 selection handler (state keeps string keys)
-  const handleOptionSelect = (_: unknown, data: { optionValue?: string | number; selectedOptions: (string | number)[] }) => {
+  const handleOptionSelect = (
+    _: unknown,
+    data: { optionValue?: string | number; selectedOptions: (string | number)[] }
+  ) => {
     if (isMulti) {
       const next = (data.selectedOptions ?? []).map(toKey);
       setSelectedKeys(next);
-      if (touched) setError(isRequired && next.length === 0 ? REQUIRED_MSG : '');
+      if (touched)
+        setError(isRequired && next.length === 0 ? REQUIRED_MSG : '');
     } else {
       const nextVal = data.optionValue != null ? toKey(data.optionValue) : null;
       setSelectedKey(nextVal);
@@ -236,13 +254,16 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
   const selectedOptions = isMulti
     ? selectedKeys
     : selectedKey
-      ? [selectedKey]
-      : [];
+    ? [selectedKey]
+    : [];
 
-  const displayText =
-    isMulti
-      ? (selectedKeys.length ? selectedKeys.map(k => keyToText.get(k) ?? k).join(', ') : '')
-      : (selectedKey ? (keyToText.get(selectedKey) ?? selectedKey) : '');
+  const displayText = isMulti
+    ? selectedKeys.length
+      ? selectedKeys.map(k => keyToText.get(k) ?? k).join(', ')
+      : ''
+    : selectedKey
+    ? keyToText.get(selectedKey) ?? selectedKey
+    : '';
 
   const effectivePlaceholder = displayText || placeholder;
 
@@ -275,9 +296,12 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
         ))}
       </Dropdown>
 
-      {description !== '' && <div className="descriptionText">{description}</div>}
+      {description !== '' && (
+        <div className="descriptionText">{description}</div>
+      )}
     </FieldAny>
   );
 }
+
 
 
