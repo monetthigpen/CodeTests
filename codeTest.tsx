@@ -166,20 +166,13 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
       }
     }
 
+    // clear errors on prefill
     setError('');
+    GlobalErrorHandle(id, ''); // same message as setError (clears)
     setTouched(false);
-    GlobalErrorHandle(id, null);
-  }, [
-    FormData,
-    FormMode,
-    starterValue,
-    options,
-    submitting,
-    isLookup,
-    id,
-    isMulti,
-    GlobalErrorHandle,
-  ]);
+
+    // NOTE: GlobalErrorHandle is not in deps
+  }, [FormData, FormMode, starterValue, options, submitting, isLookup, id, isMulti]);
 
   // ---------- Validation / Commit ------------------------------------------
   const validate = React.useCallback((): string => {
@@ -193,6 +186,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
   const commitValue = React.useCallback(() => {
     const err = validate();
     setError(err);
+    GlobalErrorHandle(id, err); // mirror setError
 
     if (isLookup) {
       // Send numeric IDs
@@ -214,19 +208,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
         : null;
       GlobalFormData(id, valueForCommit);
     }
-
-    GlobalErrorHandle(id, err);
-  }, [
-    validate,
-    GlobalFormData,
-    GlobalErrorHandle,
-    id,
-    isMulti,
-    isLookup,
-    selectedKeys,
-    selectedKey,
-    keyToNumber,
-  ]);
+  }, [validate, GlobalFormData, id, isMulti, isLookup, selectedKeys, selectedKey, keyToNumber]);
 
   // v9 selection handler (state keeps string keys)
   const handleOptionSelect = (
@@ -236,12 +218,21 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     if (isMulti) {
       const next = (data.selectedOptions ?? []).map(toKey);
       setSelectedKeys(next);
-      if (touched)
-        setError(isRequired && next.length === 0 ? REQUIRED_MSG : '');
+
+      if (touched) {
+        const msg = isRequired && next.length === 0 ? REQUIRED_MSG : '';
+        setError(msg);
+        GlobalErrorHandle(id, msg); // mirror setError
+      }
     } else {
       const nextVal = data.optionValue != null ? toKey(data.optionValue) : null;
       setSelectedKey(nextVal);
-      if (touched) setError(isRequired && !nextVal ? REQUIRED_MSG : '');
+
+      if (touched) {
+        const msg = isRequired && !nextVal ? REQUIRED_MSG : '';
+        setError(msg);
+        GlobalErrorHandle(id, msg); // mirror setError
+      }
     }
   };
 
@@ -259,7 +250,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
 
   const displayText = isMulti
     ? selectedKeys.length
-      ? selectedKeys.map(k => keyToText.get(k) ?? k).join(', ')
+      ? selectedKeys.map(k => keyToText.get(k) ?? k).join('; ') // semicolon separator
       : ''
     : selectedKey
     ? keyToText.get(selectedKey) ?? selectedKey
