@@ -17,7 +17,7 @@ export interface DropdownFieldProps {
   fieldType?: string;        // "lookup" to send numeric Id(s)
   className?: string;
   description?: string;
-  submitting?: boolean;      // <- used only to influence disabled
+  submitting?: boolean;      // drives disabled via its own useEffect
 }
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
@@ -28,7 +28,11 @@ const toKey = (k: unknown): string => (k == null ? '' : String(k));
 
 function normalizeToStringArray(input: unknown): string[] {
   if (input == null) return [];
-  if (Array.isArray((input as any)?.results)) return ((input as any).results as unknown[]).map(toKey);
+
+  if (Array.isArray((input as any)?.results)) {
+    return ((input as any).results as unknown[]).map(toKey);
+  }
+
   if (Array.isArray(input)) {
     const arr = input as unknown[];
     if (arr.length && typeof arr[0] === 'object' && arr[0] !== null) {
@@ -36,13 +40,16 @@ function normalizeToStringArray(input: unknown): string[] {
     }
     return arr.map(toKey);
   }
+
   if (typeof input === 'string' && input.includes(';')) {
     return input.split(';').map(s => toKey(s.trim())).filter(Boolean);
   }
+
   if (typeof input === 'object') {
     const o: any = input; // eslint-disable-line
     return [toKey(o?.Id ?? o?.id ?? o?.Key ?? o?.value ?? o)];
   }
+
   return [toKey(input)];
 }
 
@@ -55,12 +62,16 @@ function useOptionMaps(options: OptionItem[]) {
   return React.useMemo(() => {
     const keyToText = new Map<string, string>();
     const keyToNumber = new Map<string, number>();
+
     for (const o of options) {
       const keyStr = toKey(o.key);
       keyToText.set(keyStr, o.text);
       const maybeNum =
-        typeof o.key === 'number' ? o.key :
-        Number.isFinite(Number(keyStr)) ? Number(keyStr) : NaN;
+        typeof o.key === 'number'
+          ? o.key
+          : Number.isFinite(Number(keyStr))
+          ? Number(keyStr)
+          : NaN;
       if (!Number.isNaN(maybeNum)) keyToNumber.set(keyStr, maybeNum);
     }
     return { keyToText, keyToNumber };
@@ -71,9 +82,19 @@ function useOptionMaps(options: OptionItem[]) {
 
 export default function DropdownField(props: DropdownFieldProps): JSX.Element {
   const {
-    id, displayName, starterValue, isRequired: requiredProp, disabled: disabledProp,
-    placeholder, multiSelect, multiselect, options, fieldType, className,
-    description, submitting,
+    id,
+    displayName,
+    starterValue,
+    isRequired: requiredProp,
+    disabled: disabledProp,
+    placeholder,
+    multiSelect,
+    multiselect,
+    options,
+    fieldType,
+    className,
+    description,
+    submitting,
   } = props;
 
   const isMulti = !!(multiselect ?? multiSelect);
@@ -84,14 +105,14 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
 
   const [isRequired, setIsRequired] = React.useState<boolean>(!!requiredProp);
   const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabledProp);
-  const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);
-  const [selectedKey, setSelectedKey] = React.useState<string | null>(null);
+  const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);      // multi
+  const [selectedKey, setSelectedKey] = React.useState<string | null>(null); // single
   const [error, setError] = React.useState<string>('');
   const [touched, setTouched] = React.useState<boolean>(false);
 
   const { keyToText, keyToNumber } = useOptionMaps(options);
 
-  // single place to mirror UI error -> global error (null when empty)
+  // Mirror UI error -> global error (null when empty)
   const reportError = React.useCallback(
     (msg: string) => {
       setError(msg || '');
@@ -100,13 +121,18 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     [GlobalErrorHandle, id]
   );
 
-  // respond to required/disabled prop changes
+  // Reflect external required/disabled props
   React.useEffect(() => {
     setIsRequired(!!requiredProp);
     setIsDisabled(!!disabledProp);
   }, [requiredProp, disabledProp]);
 
-  // ---------- Prefill -------------------------------------------------------
+  // 🔁 Submitting → disable (own effect like your TextArea reference)
+  React.useEffect(() => {
+    if (submitting === true) setIsDisabled(true);
+  }, [submitting]);
+
+  // ---------- Prefill (New vs Edit/View) -----------------------------------
   React.useEffect(() => {
     const ensureInOptions = (vals: string[]) => clampToExisting(vals, options);
 
@@ -114,7 +140,9 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
       if (isMulti) {
         const initArr = ensureInOptions(
           starterValue != null
-            ? (Array.isArray(starterValue) ? starterValue.map(toKey) : [toKey(starterValue)])
+            ? (Array.isArray(starterValue)
+                ? starterValue.map(toKey)
+                : [toKey(starterValue)])
             : []
         );
         setSelectedKeys(initArr);
@@ -127,7 +155,9 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
       }
     } else {
       const raw = FormData
-        ? (isLookup ? (FormData as any)[`${id}Id`] : (FormData as any)[id])
+        ? (isLookup
+            ? (FormData as any)[`${id}Id`] // eslint-disable-line @typescript-eslint/no-explicit-any
+            : (FormData as any)[id])       // eslint-disable-line @typescript-eslint/no-explicit-any
         : undefined;
 
       if (isMulti) {
@@ -144,7 +174,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     // clear errors on prefill
     reportError('');
     setTouched(false);
-    // NOTE: GlobalErrorHandle intentionally omitted from deps
+    // NOTE: GlobalErrorHandle intentionally not in deps
   }, [FormData, FormMode, starterValue, options, isLookup, id, isMulti, reportError]);
 
   // ---------- Validation / Commit ------------------------------------------
@@ -161,6 +191,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     reportError(err);
 
     if (isLookup) {
+      // Commit numeric IDs
       const valueForCommit = isMulti
         ? selectedKeys
             .map(k => keyToNumber.get(k))
@@ -170,12 +201,13 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
         : null;
       GlobalFormData(id, valueForCommit);
     } else {
+      // Non-lookup: strings; null when empty single
       const valueForCommit = isMulti ? selectedKeys : (selectedKey ? selectedKey : null);
       GlobalFormData(id, valueForCommit);
     }
   }, [validate, reportError, GlobalFormData, id, isMulti, isLookup, selectedKeys, selectedKey, keyToNumber]);
 
-  // ---------- Selection Handlers -------------------------------------------
+  // ---------- Selection handlers -------------------------------------------
   const handleOptionSelect = (
     _: unknown,
     data: { optionValue?: string | number; selectedOptions: (string | number)[] }
@@ -196,7 +228,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     commitValue();
   };
 
-  // ---------- Trigger Display & Disabled -----------------------------------
+  // ---------- Display text & disabled --------------------------------------
   const selectedOptions = isMulti ? selectedKeys : (selectedKey ? [selectedKey] : []);
 
   const displayText = isMulti
@@ -204,9 +236,6 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     : (selectedKey ? (keyToText.get(selectedKey) ?? selectedKey) : '');
 
   const effectivePlaceholder = displayText || placeholder;
-
-  // Sync submitting with disabled on the Dropdown (no prop on <Field/>)
-  const effectiveDisabled = !!submitting || isDisabled;
 
   const hasError = !!error;
 
@@ -221,7 +250,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
         id={id}
         placeholder={effectivePlaceholder}
         multiselect={isMulti}
-        disabled={effectiveDisabled}   // <- submitting OR disabled state
+        disabled={isDisabled}     {/* submitting effect sets this true when needed */}
         inlinePopup
         selectedOptions={selectedOptions}
         onOptionSelect={handleOptionSelect}
