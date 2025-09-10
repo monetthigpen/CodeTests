@@ -36,7 +36,7 @@ function normalizeToStringArray(input: unknown): string[] {
   if (Array.isArray(input)) {
     const arr = input as unknown[];
     if (arr.length && typeof arr[0] === 'object' && arr[0] !== null) {
-      return arr.map((o: any) => toKey(o?.Id ?? o?.id ?? o?.Key ?? o?.value ?? o)); // eslint-disable-line
+      return arr.map((o: any) => toKey(o?.Id ?? o?.id ?? o?.Key ?? o?.value ?? o));
     }
     return arr.map(toKey);
   }
@@ -46,7 +46,7 @@ function normalizeToStringArray(input: unknown): string[] {
   }
 
   if (typeof input === 'object') {
-    const o: any = input; // eslint-disable-line
+    const o: any = input;
     return [toKey(o?.Id ?? o?.id ?? o?.Key ?? o?.value ?? o)];
   }
 
@@ -66,14 +66,17 @@ function useOptionMaps(options: OptionItem[]) {
     for (const o of options) {
       const keyStr = toKey(o.key);
       keyToText.set(keyStr, o.text);
+
       const maybeNum =
         typeof o.key === 'number'
           ? o.key
           : Number.isFinite(Number(keyStr))
           ? Number(keyStr)
           : NaN;
+
       if (!Number.isNaN(maybeNum)) keyToNumber.set(keyStr, maybeNum);
     }
+
     return { keyToText, keyToNumber };
   }, [options]);
 }
@@ -105,8 +108,8 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
 
   const [isRequired, setIsRequired] = React.useState<boolean>(!!requiredProp);
   const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabledProp);
-  const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);      // multi
-  const [selectedKey, setSelectedKey] = React.useState<string | null>(null); // single
+  const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);
+  const [selectedKey, setSelectedKey] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string>('');
   const [touched, setTouched] = React.useState<boolean>(false);
 
@@ -127,7 +130,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     setIsDisabled(!!disabledProp);
   }, [requiredProp, disabledProp]);
 
-  // 🔁 Submitting → disable (own effect like your TextArea reference)
+  // Submitting disables the field
   React.useEffect(() => {
     if (submitting === true) setIsDisabled(true);
   }, [submitting]);
@@ -156,8 +159,8 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     } else {
       const raw = FormData
         ? (isLookup
-            ? (FormData as any)[`${id}Id`] // eslint-disable-line @typescript-eslint/no-explicit-any
-            : (FormData as any)[id])       // eslint-disable-line @typescript-eslint/no-explicit-any
+            ? (FormData as any)[`${id}Id`]
+            : (FormData as any)[id])
         : undefined;
 
       if (isMulti) {
@@ -174,7 +177,6 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     // clear errors on prefill
     reportError('');
     setTouched(false);
-    // NOTE: GlobalErrorHandle intentionally not in deps
   }, [FormData, FormMode, starterValue, options, isLookup, id, isMulti, reportError]);
 
   // ---------- Validation / Commit ------------------------------------------
@@ -191,7 +193,6 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     reportError(err);
 
     if (isLookup) {
-      // Commit numeric IDs
       const valueForCommit = isMulti
         ? selectedKeys
             .map(k => keyToNumber.get(k))
@@ -201,8 +202,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
         : null;
       GlobalFormData(id, valueForCommit);
     } else {
-      // Non-lookup: strings; null when empty single
-      const valueForCommit = isMulti ? selectedKeys : (selectedKey ? selectedKey : null);
+      const valueForCommit = isMulti ? selectedKeys : selectedKey ? selectedKey : null;
       GlobalFormData(id, valueForCommit);
     }
   }, [validate, reportError, GlobalFormData, id, isMulti, isLookup, selectedKeys, selectedKey, keyToNumber]);
@@ -229,11 +229,15 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
   };
 
   // ---------- Display text & disabled --------------------------------------
-  const selectedOptions = isMulti ? selectedKeys : (selectedKey ? [selectedKey] : []);
+  const selectedOptions = isMulti ? selectedKeys : selectedKey ? [selectedKey] : [];
 
   const displayText = isMulti
-    ? (selectedKeys.length ? selectedKeys.map(k => keyToText.get(k) ?? k).join('; ') : '')
-    : (selectedKey ? (keyToText.get(selectedKey) ?? selectedKey) : '');
+    ? selectedKeys.length
+      ? selectedKeys.map(k => keyToText.get(k) ?? k).join('; ')
+      : ''
+    : selectedKey
+    ? keyToText.get(selectedKey) ?? selectedKey
+    : '';
 
   const effectivePlaceholder = displayText || placeholder;
 
@@ -250,7 +254,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
         id={id}
         placeholder={effectivePlaceholder}
         multiselect={isMulti}
-        disabled={isDisabled}     {/* submitting effect sets this true when needed */}
+        disabled={isDisabled}
         inlinePopup
         selectedOptions={selectedOptions}
         onOptionSelect={handleOptionSelect}
@@ -270,3 +274,4 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     </Field>
   );
 }
+
