@@ -1,29 +1,28 @@
 import * as React from 'react';
 import { Field, Dropdown, Option } from '@fluentui/react-components';
 import { DynamicFormContext } from './DynamicFormContext';
-import { formFieldsSetup, FormFieldsProps } from './formFieldBased';
+import formFieldsSetup, { FormFieldsProps } from './formFieldBased';
 
 type OptionItem = { key: string | number; text: string };
 
-export interface DropdownFieldProps {
+interface DropdownProps {
   id: string;
+  starterValue: string;          // matching your TextArea style
   displayName: string;
-  starterValue?: string | number | Array<string | number>;
-  isRequired?: boolean;
-  disabled?: boolean;
-  placeholder?: string;
-  multiSelect?: boolean;   // v8-style name
-  multiselect?: boolean;   // v9 prop name
+  isRequired: boolean;
+  placeholder: string;
+  multiSelect: boolean;
+  fieldType: string;             // "lookup" => commit under `${id}Id`
   options: OptionItem[];
-  fieldType?: string;      // "lookup" to send numeric Id(s)
-  className?: string;
-  description?: string;
-  submitting?: boolean;    // drives disabled via its own effect
+  className: string;
+  description: string;
+  disabled: boolean;
+  submitting: boolean;
 }
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
 
-// ---------- helpers ----------
+// -- helpers --
 const toKey = (k: unknown): string => (k == null ? '' : String(k));
 
 function normalizeToStringArray(input: unknown): string[] {
@@ -32,7 +31,6 @@ function normalizeToStringArray(input: unknown): string[] {
   if (Array.isArray((input as any)?.results)) {
     return ((input as any).results as unknown[]).map(toKey);
   }
-
   if (Array.isArray(input)) {
     const arr = input as unknown[];
     if (arr.length && typeof arr[0] === 'object' && arr[0] !== null) {
@@ -40,16 +38,13 @@ function normalizeToStringArray(input: unknown): string[] {
     }
     return arr.map(toKey);
   }
-
   if (typeof input === 'string' && input.includes(';')) {
     return input.split(';').map(s => toKey(s.trim())).filter(Boolean);
   }
-
   if (typeof input === 'object') {
     const o: any = input;
     return [toKey(o?.Id ?? o?.id ?? o?.Key ?? o?.value ?? o)];
   }
-
   return [toKey(input)];
 }
 
@@ -77,27 +72,26 @@ function useOptionMaps(options: OptionItem[]) {
   }, [options]);
 }
 
-// ---------- component ----------
-export default function DropdownField(props: DropdownFieldProps): JSX.Element {
+export default function DropdownComponent(props: DropdownProps): JSX.Element {
   const {
     id,
-    displayName,
     starterValue,
+    displayName,
     isRequired: requiredProp,
-    disabled: disabledProp,
     placeholder,
     multiSelect,
-    multiselect,
-    options,
     fieldType,
+    options,
     className,
     description,
+    disabled: disabledProp,
     submitting,
   } = props;
 
-  const isMulti = !!(multiselect ?? multiSelect);
+  const isMulti = !!multiSelect;
   const isLookup = fieldType === 'lookup';
 
+  // 🔹 Context set up EXACTLY like your TextArea screenshot
   const {
     FormData,
     GlobalFormData,
@@ -108,7 +102,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     userBasedPerms,
     curUserInfo,
     listCols,
-  } = React.useContext(DynamicFormContext as any);
+  } = React.useContext(DynamicFormContext);
 
   const [isRequired, setIsRequired] = React.useState<boolean>(!!requiredProp);
   const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabledProp);
@@ -116,12 +110,13 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
 
   const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);
   const [selectedKey, setSelectedKey] = React.useState<string | null>(null);
+
   const [error, setError] = React.useState<string>('');
   const [touched, setTouched] = React.useState<boolean>(false);
 
   const { keyToText, keyToNumber } = useOptionMaps(options);
 
-  // Mirror UI error -> global error (null when empty) under correct internal name
+  // mirror UI error -> global (null when empty) under the correct internal name
   const reportError = React.useCallback(
     (msg: string) => {
       const targetId = isLookup ? `${id}Id` : id;
@@ -137,36 +132,30 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     setIsDisabled(!!disabledProp);
   }, [requiredProp, disabledProp]);
 
-  // submitting disables (standalone effect, like your reference)
+  // submitting => disable (standalone effect like your TextArea)
   React.useEffect(() => {
     if (submitting === true) setIsDisabled(true);
   }, [submitting]);
 
-  // prefill + hide/disable via rules
+  // Prefill + Disable/Hide rules
   React.useEffect(() => {
     const ensureInOptions = (vals: string[]) => clampToExisting(vals, options);
 
     // Prefill: New vs Edit/View
     if (FormMode == 8) {
       if (isMulti) {
-        const initArr = ensureInOptions(
-          starterValue != null
-            ? (Array.isArray(starterValue)
-                ? starterValue.map(toKey)
-                : [toKey(starterValue)])
-            : []
-        );
+        const initArr = ensureInOptions(starterValue ? [toKey(starterValue)] : []);
         setSelectedKeys(initArr);
         setSelectedKey(null);
       } else {
-        const init = starterValue != null ? toKey(starterValue) : '';
+        const init = starterValue ? toKey(starterValue) : '';
         const clamped = ensureInOptions(init ? [init] : []);
         setSelectedKey(clamped[0] ?? null);
         setSelectedKeys([]);
       }
     } else {
       const raw = FormData
-        ? (isLookup ? (FormData as any)[`${id}Id`] : (FormData as any)[id])
+        ? (isLookup ? (FormData as any)[`${id}Id`] : (FormData as any)[id]) // eslint-disable-line @typescript-eslint/no-explicit-any
         : undefined;
 
       if (isMulti) {
@@ -180,9 +169,9 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
       }
     }
 
-    // Disable / Hide logic
+    // Disable or enable the field
+    // For Display form, field is disabled
     if (FormMode === 4) {
-      // Display form: field is disabled
       setIsDisabled(true);
     } else {
       const formFieldProps: FormFieldsProps = {
@@ -193,7 +182,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
         curField: displayName,
         formStateData: FormData,
         listColumns: listCols,
-      } as any;
+      } as any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
       const results = formFieldsSetup(formFieldProps) || [];
       if (results.length > 0) {
@@ -204,10 +193,10 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
       }
     }
 
-    // Clear errors on prefill
+    // clear errors on prefill
     reportError('');
     setTouched(false);
-    // NOTE: GlobalErrorHandle intentionally not in deps
+    // GlobalErrorHandle intentionally not in deps
   }, [
     FormData,
     FormMode,
@@ -253,17 +242,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
       const valueForCommit = isMulti ? selectedKeys : selectedKey ? selectedKey : null;
       GlobalFormData(targetId, valueForCommit);
     }
-  }, [
-    validate,
-    reportError,
-    GlobalFormData,
-    id,
-    isMulti,
-    isLookup,
-    selectedKeys,
-    selectedKey,
-    keyToNumber,
-  ]);
+  }, [validate, reportError, GlobalFormData, id, isMulti, isLookup, selectedKeys, selectedKey, keyToNumber]);
 
   // selection handlers
   const handleOptionSelect = (
@@ -286,7 +265,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     commitValue();
   };
 
-  // display text & disabled
+  // UI text & rendering
   const selectedOptions = isMulti ? selectedKeys : selectedKey ? [selectedKey] : [];
   const displayText = isMulti
     ? selectedKeys.length
@@ -296,7 +275,6 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     ? keyToText.get(selectedKey) ?? selectedKey
     : '';
   const effectivePlaceholder = displayText || placeholder;
-
   const hasError = !!error;
 
   return (
