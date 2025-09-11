@@ -4,9 +4,9 @@ import { Dropdown, IDropdownOption } from '@fluentui/react';
 import { DynamicFormContext } from './DynamicFormContext';
 import formFieldsSetup, { FormFieldsProps } from './formFieldBased';
 
-interface OptionItem extends IDropdownOption {
-  // key: string | number; text: string; (already in IDropdownOption)
-}
+/* ------------------------------ Types & Props ------------------------------ */
+
+interface OptionItem extends IDropdownOption {}
 
 interface DropdownProps {
   id: string;
@@ -14,8 +14,8 @@ interface DropdownProps {
   displayName: string;
   isRequired?: boolean;
   placeholder?: string;
-  multiSelect?: boolean;
-  fieldType?: string;                  // 'lookup' to commit under `${id}Id` as numbers
+  multiSelect?: boolean;                 // Fluent v8 prop
+  fieldType?: string;                    // 'lookup' => commit under `${id}Id` as numbers
   options: OptionItem[];
   className?: string;
   description?: string;
@@ -25,28 +25,37 @@ interface DropdownProps {
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
 
+/* --------------------------------- Helpers -------------------------------- */
+
 const toKey = (k: unknown): string => (k == null ? '' : String(k));
 
 function normalizeToStringArray(input: unknown): string[] {
   if (input == null) return [];
 
+  // SharePoint-style multi lookup: { results: [...] }
   if (Array.isArray((input as any)?.results)) {
     return ((input as any).results as unknown[]).map(toKey);
   }
+
   if (Array.isArray(input)) {
     const arr = input as unknown[];
+    // Array of objects with common Id-like shapes
     if (arr.length && typeof arr[0] === 'object' && arr[0] !== null) {
       return arr.map((o: any) => toKey(o?.Id ?? o?.id ?? o?.Key ?? o?.value ?? o));
     }
     return arr.map(toKey);
   }
+
+  // Delimited string fallback (e.g., "1;2;3")
   if (typeof input === 'string' && input.includes(';')) {
     return input.split(';').map(s => toKey(s.trim())).filter(Boolean);
   }
+
   if (typeof input === 'object') {
     const o: any = input;
     return [toKey(o?.Id ?? o?.id ?? o?.Key ?? o?.value ?? o)];
   }
+
   return [toKey(input)];
 }
 
@@ -54,6 +63,8 @@ function clampToExisting(values: string[], opts: OptionItem[]): string[] {
   const allowed = new Set(opts.map(o => toKey(o.key)));
   return values.filter(v => allowed.has(v));
 }
+
+/* -------------------------------- Component -------------------------------- */
 
 export default function DropdownComponent(props: DropdownProps): JSX.Element {
   const {
@@ -90,13 +101,14 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
   const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabledProp);
   const [isHidden, setIsHidden] = React.useState<boolean>(false);
 
-  // v8 selection state (strings for internal handling)
-  const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);
-  const [selectedKey, setSelectedKey] = React.useState<string | null>(null);
+  // Keep internal selection as strings (Fluent v8 works with string keys)
+  const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);      // multi
+  const [selectedKey, setSelectedKey] = React.useState<string | null>(null); // single
 
   const [error, setError] = React.useState<string>('');
   const [touched, setTouched] = React.useState<boolean>(false);
 
+  // --- Error reporter: mirror UI error to GlobalErrorHandle (null when empty) ---
   const reportError = React.useCallback(
     (msg: string) => {
       const targetId = isLookup ? `${id}Id` : id;
@@ -106,20 +118,22 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     [GlobalErrorHandle, id, isLookup]
   );
 
+  // Reflect external required/disabled props
   React.useEffect(() => {
     setIsRequired(!!requiredProp);
     setIsDisabled(!!disabledProp);
   }, [requiredProp, disabledProp]);
 
-  // Submitting → disable
+  // Submitting => disable (standalone effect, aligned with TextArea pattern)
   React.useEffect(() => {
     if (submitting === true) setIsDisabled(true);
   }, [submitting]);
 
-  // Prefill + rules + display mode
+  // Prefill + rule-based disable/hide + display mode handling
   React.useEffect(() => {
     const ensureInOptions = (vals: string[]) => clampToExisting(vals, options);
 
+    // Prefill: New (8) vs Edit/View
     if (FormMode == 8) {
       if (isMulti) {
         const initArr = ensureInOptions(
@@ -139,7 +153,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
       }
     } else {
       const raw = FormData
-        ? (isLookup ? (FormData as any)[`${id}Id`] : (FormData as any)[id])
+        ? (isLookup ? (FormData as any)[`${id}Id`] : (FormData as any)[id]) // eslint-disable-line @typescript-eslint/no-explicit-any
         : undefined;
 
       if (isMulti) {
@@ -155,6 +169,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
 
     // Disable or enable the field
     if (FormMode === 4) {
+      // Display form: field is disabled
       setIsDisabled(true);
     } else {
       const formFieldProps: FormFieldsProps = {
@@ -165,7 +180,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
         curField: displayName,
         formStateData: FormData,
         listColumns: listCols,
-      } as any;
+      } as any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
       const results = formFieldsSetup(formFieldProps) || [];
       if (results.length > 0) {
@@ -176,8 +191,10 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
       }
     }
 
+    // Clear errors on prefill
     reportError('');
     setTouched(false);
+    // NOTE: GlobalErrorHandle intentionally not in deps
   }, [
     FormData,
     FormMode,
@@ -195,6 +212,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     reportError,
   ]);
 
+  // --- Validation + Commit ---
   const validate = React.useCallback((): string => {
     if (isRequired) {
       if (isMulti && selectedKeys.length === 0) return REQUIRED_MSG;
@@ -229,13 +247,13 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     }
   }, [validate, reportError, GlobalFormData, id, isMulti, isLookup, selectedKeys, selectedKey]);
 
-  // v8 onChange handler
+  // --- v8 change/blur handlers ---
   const handleChange = (
     _e: React.FormEvent<HTMLElement | HTMLDivElement>,
     option?: IDropdownOption
   ) => {
     if (!option) return;
-    const k = toKey(option.key);
+    const k = String(option.key);
 
     if (isMulti) {
       const next = option.selected
@@ -254,13 +272,12 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     commitValue();
   };
 
-  // text shown as placeholder for your UX (v8 renders selection itself)
+  // For your UX we surface a semicolon-joined label (v8 also shows selection itself)
   const displayText = isMulti
     ? (selectedKeys.length ? selectedKeys.join('; ') : '')
     : (selectedKey ?? '');
 
   const effectivePlaceholder = displayText || placeholder || '';
-
   const hasError = !!error;
 
   return (
@@ -277,6 +294,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
           multiSelect={isMulti}
           options={options}
           disabled={isDisabled}
+          // IMPORTANT: use the correct prop for each mode
           selectedKeys={isMulti ? selectedKeys : undefined}
           selectedKey={!isMulti ? (selectedKey ?? undefined) : undefined}
           onChange={handleChange}
@@ -290,5 +308,6 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     </div>
   );
 }
+
 
 
