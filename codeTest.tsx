@@ -112,27 +112,28 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
 
   const { keyToText, keyToNumber } = useOptionMaps(options);
 
-  // mirror UI error -> global error (null when empty)
+  // Mirror UI error -> global error (null when empty)
   const reportError = React.useCallback(
     (msg: string) => {
+      const targetId = isLookup ? `${id}Id` : id;
       setError(msg || '');
-      GlobalErrorHandle(id, msg || null);
+      GlobalErrorHandle(targetId, msg || null);
     },
-    [GlobalErrorHandle, id]
+    [GlobalErrorHandle, id, isLookup]
   );
 
-  // reflect external required/disabled props
+  // Reflect external required/disabled props
   React.useEffect(() => {
     setIsRequired(!!requiredProp);
     setIsDisabled(!!disabledProp);
   }, [requiredProp, disabledProp]);
 
-  // submitting disables (own effect, like your TextArea reference)
+  // Submitting disables
   React.useEffect(() => {
     if (submitting === true) setIsDisabled(true);
   }, [submitting]);
 
-  // prefill new vs edit/view
+  // Prefill
   React.useEffect(() => {
     const ensureInOptions = (vals: string[]) => clampToExisting(vals, options);
 
@@ -169,12 +170,11 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
       }
     }
 
-    // clear errors on prefill
     reportError('');
     setTouched(false);
   }, [FormData, FormMode, starterValue, options, isLookup, id, isMulti, reportError]);
 
-  // validate & commit
+  // Validation + Commit
   const validate = React.useCallback((): string => {
     if (isRequired) {
       if (isMulti && selectedKeys.length === 0) return REQUIRED_MSG;
@@ -187,6 +187,8 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     const err = validate();
     reportError(err);
 
+    const targetId = isLookup ? `${id}Id` : id;
+
     if (isLookup) {
       const valueForCommit = isMulti
         ? selectedKeys
@@ -195,14 +197,14 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
         : selectedKey
         ? keyToNumber.get(selectedKey) ?? null
         : null;
-      GlobalFormData(id, valueForCommit);
+      GlobalFormData(targetId, valueForCommit);
     } else {
-      const valueForCommit = isMulti ? selectedKeys : (selectedKey ? selectedKey : null);
-      GlobalFormData(id, valueForCommit);
+      const valueForCommit = isMulti ? selectedKeys : selectedKey ? selectedKey : null;
+      GlobalFormData(targetId, valueForCommit);
     }
   }, [validate, reportError, GlobalFormData, id, isMulti, isLookup, selectedKeys, selectedKey, keyToNumber]);
 
-  // selection handlers
+  // Handlers
   const handleOptionSelect = (
     _e: unknown,
     data: { optionValue?: string | number; selectedOptions: (string | number)[] }
@@ -223,13 +225,16 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     commitValue();
   };
 
-  // display text and disabled
-  const selectedOptions = isMulti ? selectedKeys : (selectedKey ? [selectedKey] : []);
+  // Render
+  const selectedOptions = isMulti ? selectedKeys : selectedKey ? [selectedKey] : [];
   const displayText = isMulti
-    ? (selectedKeys.length ? selectedKeys.map(k => keyToText.get(k) ?? k).join('; ') : '')
-    : (selectedKey ? (keyToText.get(selectedKey) ?? selectedKey) : '');
+    ? selectedKeys.length
+      ? selectedKeys.map(k => keyToText.get(k) ?? k).join('; ')
+      : ''
+    : selectedKey
+    ? keyToText.get(selectedKey) ?? selectedKey
+    : '';
   const effectivePlaceholder = displayText || placeholder;
-
   const hasError = !!error;
 
   return (
@@ -263,3 +268,4 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     </Field>
   );
 }
+
