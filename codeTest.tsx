@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Field, Dropdown, Option } from '@fluentui/react-components';
 import { DynamicFormContext } from './DynamicFormContext';
+import { formFieldsSetup, FormFieldsProps } from './formFieldBased';
 
 type OptionItem = { key: string | number; text: string };
 
@@ -11,24 +12,27 @@ export interface DropdownFieldProps {
   isRequired?: boolean;
   disabled?: boolean;
   placeholder?: string;
-  multiSelect?: boolean;
-  multiselect?: boolean;
+  multiSelect?: boolean;   // v8-style name
+  multiselect?: boolean;   // v9 prop name
   options: OptionItem[];
-  fieldType?: string;
+  fieldType?: string;      // "lookup" to send numeric Id(s)
   className?: string;
   description?: string;
-  submitting?: boolean;
+  submitting?: boolean;    // drives disabled via its own effect
 }
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
 
+// ---------- helpers ----------
 const toKey = (k: unknown): string => (k == null ? '' : String(k));
 
 function normalizeToStringArray(input: unknown): string[] {
   if (input == null) return [];
+
   if (Array.isArray((input as any)?.results)) {
     return ((input as any).results as unknown[]).map(toKey);
   }
+
   if (Array.isArray(input)) {
     const arr = input as unknown[];
     if (arr.length && typeof arr[0] === 'object' && arr[0] !== null) {
@@ -36,13 +40,16 @@ function normalizeToStringArray(input: unknown): string[] {
     }
     return arr.map(toKey);
   }
+
   if (typeof input === 'string' && input.includes(';')) {
     return input.split(';').map(s => toKey(s.trim())).filter(Boolean);
   }
+
   if (typeof input === 'object') {
     const o: any = input;
     return [toKey(o?.Id ?? o?.id ?? o?.Key ?? o?.value ?? o)];
   }
+
   return [toKey(input)];
 }
 
@@ -70,6 +77,7 @@ function useOptionMaps(options: OptionItem[]) {
   }, [options]);
 }
 
+// ---------- component ----------
 export default function DropdownField(props: DropdownFieldProps): JSX.Element {
   const {
     id,
@@ -90,8 +98,17 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
   const isMulti = !!(multiselect ?? multiSelect);
   const isLookup = fieldType === 'lookup';
 
-  const { FormData, GlobalFormData, FormMode, GlobalErrorHandle } =
-    React.useContext(DynamicFormContext);
+  const {
+    FormData,
+    GlobalFormData,
+    FormMode,
+    GlobalErrorHandle,
+    AllDisableFields,
+    AllHiddenFields,
+    userBasedPerms,
+    curUserInfo,
+    listCols,
+  } = React.useContext(DynamicFormContext as any);
 
   const [isRequired, setIsRequired] = React.useState<boolean>(!!requiredProp);
   const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabledProp);
@@ -104,6 +121,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
 
   const { keyToText, keyToNumber } = useOptionMaps(options);
 
+  // Mirror UI error -> global error (null when empty) under correct internal name
   const reportError = React.useCallback(
     (msg: string) => {
       const targetId = isLookup ? `${id}Id` : id;
@@ -113,18 +131,22 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     [GlobalErrorHandle, id, isLookup]
   );
 
+  // reflect required/disabled props
   React.useEffect(() => {
     setIsRequired(!!requiredProp);
     setIsDisabled(!!disabledProp);
   }, [requiredProp, disabledProp]);
 
+  // submitting disables (standalone effect, like your reference)
   React.useEffect(() => {
     if (submitting === true) setIsDisabled(true);
   }, [submitting]);
 
+  // prefill + hide/disable via rules
   React.useEffect(() => {
     const ensureInOptions = (vals: string[]) => clampToExisting(vals, options);
 
+    // Prefill: New vs Edit/View
     if (FormMode == 8) {
       if (isMulti) {
         const initArr = ensureInOptions(
@@ -146,6 +168,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
       const raw = FormData
         ? (isLookup ? (FormData as any)[`${id}Id`] : (FormData as any)[id])
         : undefined;
+
       if (isMulti) {
         const arr = ensureInOptions(normalizeToStringArray(raw));
         setSelectedKeys(arr);
@@ -157,10 +180,52 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
       }
     }
 
+    // Disable / Hide logic
+    if (FormMode === 4) {
+      // Display form: field is disabled
+      setIsDisabled(true);
+    } else {
+      const formFieldProps: FormFieldsProps = {
+        disabledList: AllDisableFields,
+        hiddenList: AllHiddenFields,
+        userBasedList: userBasedPerms,
+        curUserList: curUserInfo,
+        curField: displayName,
+        formStateData: FormData,
+        listColumns: listCols,
+      } as any;
+
+      const results = formFieldsSetup(formFieldProps) || [];
+      if (results.length > 0) {
+        for (let i = 0; i < results.length; i++) {
+          if (results[i].isDisabled !== undefined) setIsDisabled(results[i].isDisabled);
+          if (results[i].isHidden !== undefined) setIsHidden(results[i].isHidden);
+        }
+      }
+    }
+
+    // Clear errors on prefill
     reportError('');
     setTouched(false);
-  }, [FormData, FormMode, starterValue, options, isLookup, id, isMulti, reportError]);
+    // NOTE: GlobalErrorHandle intentionally not in deps
+  }, [
+    FormData,
+    FormMode,
+    starterValue,
+    options,
+    isLookup,
+    id,
+    isMulti,
+    displayName,
+    AllDisableFields,
+    AllHiddenFields,
+    userBasedPerms,
+    curUserInfo,
+    listCols,
+    reportError,
+  ]);
 
+  // validate & commit
   const validate = React.useCallback((): string => {
     if (isRequired) {
       if (isMulti && selectedKeys.length === 0) return REQUIRED_MSG;
@@ -188,8 +253,19 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
       const valueForCommit = isMulti ? selectedKeys : selectedKey ? selectedKey : null;
       GlobalFormData(targetId, valueForCommit);
     }
-  }, [validate, reportError, GlobalFormData, id, isMulti, isLookup, selectedKeys, selectedKey, keyToNumber]);
+  }, [
+    validate,
+    reportError,
+    GlobalFormData,
+    id,
+    isMulti,
+    isLookup,
+    selectedKeys,
+    selectedKey,
+    keyToNumber,
+  ]);
 
+  // selection handlers
   const handleOptionSelect = (
     _e: unknown,
     data: { optionValue?: string | number; selectedOptions: (string | number)[] }
@@ -210,6 +286,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     commitValue();
   };
 
+  // display text & disabled
   const selectedOptions = isMulti ? selectedKeys : selectedKey ? [selectedKey] : [];
   const displayText = isMulti
     ? selectedKeys.length
@@ -219,6 +296,7 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     ? keyToText.get(selectedKey) ?? selectedKey
     : '';
   const effectivePlaceholder = displayText || placeholder;
+
   const hasError = !!error;
 
   return (
