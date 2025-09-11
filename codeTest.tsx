@@ -11,28 +11,24 @@ export interface DropdownFieldProps {
   isRequired?: boolean;
   disabled?: boolean;
   placeholder?: string;
-  multiSelect?: boolean;     // v8-style name
-  multiselect?: boolean;     // v9 prop name
+  multiSelect?: boolean;
+  multiselect?: boolean;
   options: OptionItem[];
-  fieldType?: string;        // "lookup" to send numeric Id(s)
+  fieldType?: string;
   className?: string;
   description?: string;
-  submitting?: boolean;      // drives disabled via its own useEffect
+  submitting?: boolean;
 }
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
-
-// ---- helpers ---------------------------------------------------------------
 
 const toKey = (k: unknown): string => (k == null ? '' : String(k));
 
 function normalizeToStringArray(input: unknown): string[] {
   if (input == null) return [];
-
   if (Array.isArray((input as any)?.results)) {
     return ((input as any).results as unknown[]).map(toKey);
   }
-
   if (Array.isArray(input)) {
     const arr = input as unknown[];
     if (arr.length && typeof arr[0] === 'object' && arr[0] !== null) {
@@ -40,16 +36,13 @@ function normalizeToStringArray(input: unknown): string[] {
     }
     return arr.map(toKey);
   }
-
   if (typeof input === 'string' && input.includes(';')) {
     return input.split(';').map(s => toKey(s.trim())).filter(Boolean);
   }
-
   if (typeof input === 'object') {
     const o: any = input;
     return [toKey(o?.Id ?? o?.id ?? o?.Key ?? o?.value ?? o)];
   }
-
   return [toKey(input)];
 }
 
@@ -62,7 +55,6 @@ function useOptionMaps(options: OptionItem[]) {
   return React.useMemo(() => {
     const keyToText = new Map<string, string>();
     const keyToNumber = new Map<string, number>();
-
     for (const o of options) {
       const keyStr = toKey(o.key);
       keyToText.set(keyStr, o.text);
@@ -77,8 +69,6 @@ function useOptionMaps(options: OptionItem[]) {
     return { keyToText, keyToNumber };
   }, [options]);
 }
-
-// ---- component -------------------------------------------------------------
 
 export default function DropdownField(props: DropdownFieldProps): JSX.Element {
   const {
@@ -105,6 +95,8 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
 
   const [isRequired, setIsRequired] = React.useState<boolean>(!!requiredProp);
   const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabledProp);
+  const [isHidden, setIsHidden] = React.useState<boolean>(false);
+
   const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);
   const [selectedKey, setSelectedKey] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string>('');
@@ -112,7 +104,6 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
 
   const { keyToText, keyToNumber } = useOptionMaps(options);
 
-  // Mirror UI error -> global error (null when empty)
   const reportError = React.useCallback(
     (msg: string) => {
       const targetId = isLookup ? `${id}Id` : id;
@@ -122,18 +113,15 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     [GlobalErrorHandle, id, isLookup]
   );
 
-  // Reflect external required/disabled props
   React.useEffect(() => {
     setIsRequired(!!requiredProp);
     setIsDisabled(!!disabledProp);
   }, [requiredProp, disabledProp]);
 
-  // Submitting disables
   React.useEffect(() => {
     if (submitting === true) setIsDisabled(true);
   }, [submitting]);
 
-  // Prefill
   React.useEffect(() => {
     const ensureInOptions = (vals: string[]) => clampToExisting(vals, options);
 
@@ -158,7 +146,6 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
       const raw = FormData
         ? (isLookup ? (FormData as any)[`${id}Id`] : (FormData as any)[id])
         : undefined;
-
       if (isMulti) {
         const arr = ensureInOptions(normalizeToStringArray(raw));
         setSelectedKeys(arr);
@@ -174,7 +161,6 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     setTouched(false);
   }, [FormData, FormMode, starterValue, options, isLookup, id, isMulti, reportError]);
 
-  // Validation + Commit
   const validate = React.useCallback((): string => {
     if (isRequired) {
       if (isMulti && selectedKeys.length === 0) return REQUIRED_MSG;
@@ -204,7 +190,6 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     }
   }, [validate, reportError, GlobalFormData, id, isMulti, isLookup, selectedKeys, selectedKey, keyToNumber]);
 
-  // Handlers
   const handleOptionSelect = (
     _e: unknown,
     data: { optionValue?: string | number; selectedOptions: (string | number)[] }
@@ -225,7 +210,6 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
     commitValue();
   };
 
-  // Render
   const selectedOptions = isMulti ? selectedKeys : selectedKey ? [selectedKey] : [];
   const displayText = isMulti
     ? selectedKeys.length
@@ -238,34 +222,37 @@ export default function DropdownField(props: DropdownFieldProps): JSX.Element {
   const hasError = !!error;
 
   return (
-    <Field
-      label={displayName}
-      required={isRequired}
-      validationMessage={hasError ? error : undefined}
-      validationState={hasError ? 'error' : undefined}
-    >
-      <Dropdown
-        id={id}
-        placeholder={effectivePlaceholder}
-        multiselect={isMulti}
-        disabled={isDisabled}
-        inlinePopup
-        selectedOptions={selectedOptions}
-        onOptionSelect={handleOptionSelect}
-        onBlur={handleBlur}
-        className={className}
+    <div style={{ display: isHidden ? 'none' : 'block' }}>
+      <Field
+        label={displayName}
+        required={isRequired}
+        validationMessage={hasError ? error : undefined}
+        validationState={hasError ? 'error' : undefined}
       >
-        {options.map(o => (
-          <Option key={toKey(o.key)} value={toKey(o.key)}>
-            {o.text}
-          </Option>
-        ))}
-      </Dropdown>
+        <Dropdown
+          id={id}
+          placeholder={effectivePlaceholder}
+          multiselect={isMulti}
+          disabled={isDisabled}
+          inlinePopup
+          selectedOptions={selectedOptions}
+          onOptionSelect={handleOptionSelect}
+          onBlur={handleBlur}
+          className={className}
+        >
+          {options.map(o => (
+            <Option key={toKey(o.key)} value={toKey(o.key)}>
+              {o.text}
+            </Option>
+          ))}
+        </Dropdown>
 
-      {description !== '' && (
-        <div className="descriptionText">{description}</div>
-      )}
-    </Field>
+        {description !== '' && (
+          <div className="descriptionText">{description}</div>
+        )}
+      </Field>
+    </div>
   );
 }
+
 
