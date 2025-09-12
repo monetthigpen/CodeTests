@@ -73,12 +73,12 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
   const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabledProp);
   const [isHidden, setIsHidden] = React.useState<boolean>(false);
 
-  // Controlled selection state (always an array)
+  // Controlled selection
   const [selectedOptions, setSelectedOptions] = React.useState<string[]>([]);
   const [error, setError] = React.useState<string>('');
   const [touched, setTouched] = React.useState<boolean>(false);
 
-  // Cache of visible text when locked/disabled so it stays visible
+  // Lock/cache for display text when disabled
   const [displayOverride, setDisplayOverride] = React.useState<string>('');
   const isLockedRef = React.useRef<boolean>(false);
   const didInitRef = React.useRef<boolean>(false);
@@ -103,7 +103,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     setIsDisabled(!!disabledProp);
   }, [requiredProp, disabledProp]);
 
-  // Submitting disables and locks the display text
+  // Submitting disables and locks display text
   React.useEffect(() => {
     if (submitting) {
       setIsDisabled(true);
@@ -113,7 +113,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     }
   }, [submitting, selectedOptions, keyToText]);
 
-  // Prefill and rule-based disable/hide, guarded so submit/display mode won't wipe selection
+  // Prefill and rule-based disable/hide
   React.useEffect(() => {
     const ensureInOptions = (vals: string[]) => clampToExisting(vals, options);
 
@@ -197,7 +197,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     return '';
   }, [isRequired, selectedOptions]);
 
-  // Commit to API: send null when empty (also numbers for lookup)
+  // Commit: send null when empty; numbers for lookup
   const commitValue = React.useCallback(() => {
     const err = validate();
     reportError(err);
@@ -205,21 +205,12 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     const targetId = isLookup ? `${id}Id` : id;
 
     if (isLookup) {
-      const nums = selectedOptions
-        .map(k => Number(k))
-        .filter(n => Number.isFinite(n));
-      GlobalFormData(
-        targetId,
-        nums.length === 0 ? null : multiselect ? nums : nums[0]
-      );
+      const nums = selectedOptions.map(k => Number(k)).filter(n => Number.isFinite(n));
+      GlobalFormData(targetId, nums.length === 0 ? null : multiselect ? nums : nums[0]);
     } else {
       GlobalFormData(
         targetId,
-        selectedOptions.length === 0
-          ? null
-          : multiselect
-          ? selectedOptions
-          : selectedOptions[0]
+        selectedOptions.length === 0 ? null : multiselect ? selectedOptions : selectedOptions[0]
       );
     }
 
@@ -241,7 +232,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     commitValue();
   };
 
-  // Semicolon-joined labels for display (always defined strings)
+  // Semicolon-joined labels for display
   const selectedLabels = selectedOptions.map(k => keyToText.get(k) ?? k);
   const joinedText = selectedLabels.join('; ');
   const visibleText = displayOverride || joinedText;
@@ -249,8 +240,17 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
   const triggerPlaceholder = triggerText || (placeholder || '');
   const hasError = !!error;
 
+  // Build class and attributes so parent CSS gray-out continues to work
+  const disabledClass = isDisabled ? 'is-disabled' : '';
+  const rootClassName = [className, disabledClass].filter(Boolean).join(' ');
+
   return (
-    <div style={{ display: isHidden ? 'none' : 'block' }}>
+    <div
+      style={{ display: isHidden ? 'none' : 'block' }}
+      className={rootClassName}
+      aria-disabled={isDisabled ? 'true' : undefined}
+      data-disabled={isDisabled ? 'true' : undefined}
+    >
       <Field
         label={displayName}
         required={isRequired}
@@ -258,12 +258,15 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
         validationState={hasError ? 'error' : undefined}
       >
         {isDisabled ? (
+          // Disabled Input to retain gray-out visuals and keep text visible
           <Input
             id={id}
-            readOnly
+            disabled
             value={triggerText}
             placeholder={triggerPlaceholder}
-            className={className}
+            className={rootClassName}
+            aria-disabled="true"
+            data-disabled="true"
           />
         ) : (
           <Dropdown
@@ -274,7 +277,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
             selectedOptions={selectedOptions}
             onOptionSelect={handleOptionSelect}
             onBlur={handleBlur}
-            className={className}
+            className={rootClassName}
             value={triggerText}
             placeholder={triggerPlaceholder}
             title={triggerText}
