@@ -1,255 +1,197 @@
 import * as React from 'react';
-import { Field, Combobox, Option } from '@fluentui/react-components';
+import { Field, Dropdown, Option } from '@fluentui/react-components';
 import { DynamicFormContext } from './DynamicFormContext';
+import formFieldsSetup, { FormFieldsProps } from './formFieldBased';
 
-type PersonOption = {
-  key: string | number;   // person/user id (string or number)
-  text: string;           // primary display (e.g., Full Name)
-  subText?: string;       // optional (e.g., email)
-};
+/* ------------------------------ Props ------------------------------ */
 
-export interface PeoplePickerProps {
+interface DropdownProps {
   id: string;
-  displayName: string;
-  placeholder?: string;
-  isRequired?: boolean;
-  disabled?: boolean;
-  /** If true => multi; otherwise single */
-  multiselect?: boolean;
-  /** Initial options (e.g., first page or known users) */
-  options?: PersonOption[];
-  /** Starter value(s) for "New" form */
   starterValue?: string | number | Array<string | number>;
-  /** When provided, used to fetch suggestions as user types */
-  onSearch?: (query: string) => Promise<PersonOption[]>;
-  /** SP/SharePoint person fields should commit numeric IDs */
-  fieldType?: 'user' | 'lookup' | string;
+  displayName: string;
+  isRequired?: boolean;
+  placeholder?: string;
+  multiselect?: boolean;                 // v9 prop
+  fieldType?: string;                    // 'lookup' => commit under `${id}Id` as numbers
+  options: { key: string | number; text: string }[];
   className?: string;
   description?: string;
-  submitting?: boolean; // submitting disables via its own effect
+  disabled?: boolean;
+  submitting?: boolean;
 }
 
-// ---------------- helpers ----------------
+const REQUIRED_MSG = 'This is a required field and cannot be blank!';
+
+/* ------------------------------ Helpers ------------------------------ */
 
 const toKey = (k: unknown): string => (k == null ? '' : String(k));
 
 function normalizeToStringArray(input: unknown): string[] {
   if (input == null) return [];
-
   if (Array.isArray((input as any)?.results)) {
     return ((input as any).results as unknown[]).map(toKey);
   }
-
   if (Array.isArray(input)) {
-    const arr = input as unknown[];
-    if (arr.length && typeof arr[0] === 'object' && arr[0] !== null) {
-      return arr.map((o: any) => toKey(o?.Id ?? o?.id ?? o?.Key ?? o?.value ?? o)); // eslint-disable-line
-    }
-    return arr.map(toKey);
+    return (input as unknown[]).map(toKey);
   }
-
   if (typeof input === 'string' && input.includes(';')) {
     return input.split(';').map(s => toKey(s.trim())).filter(Boolean);
   }
-
-  if (typeof input === 'object') {
-    const o: any = input; // eslint-disable-line
-    return [toKey(o?.Id ?? o?.id ?? o?.Key ?? o?.value ?? o)];
-  }
-
   return [toKey(input)];
 }
 
-function clampToExisting(values: string[], opts: PersonOption[]): string[] {
+function clampToExisting(values: string[], opts: { key: string | number }[]): string[] {
   const allowed = new Set(opts.map(o => toKey(o.key)));
   return values.filter(v => allowed.has(v));
 }
 
-function useOptionMaps(options: PersonOption[]) {
-  return React.useMemo(() => {
-    const keyToText = new Map<string, string>();
-    const keyToSub = new Map<string, string | undefined>();
-    const keyToNumber = new Map<string, number>();
+/* ------------------------------ Component ------------------------------ */
 
-    for (const o of options) {
-      const k = toKey(o.key);
-      keyToText.set(k, o.text);
-      keyToSub.set(k, o.subText);
-      const maybeNum = typeof o.key === 'number' ? o.key : Number.isFinite(Number(k)) ? Number(k) : NaN;
-      if (!Number.isNaN(maybeNum)) keyToNumber.set(k, maybeNum);
-    }
-    return { keyToText, keyToSub, keyToNumber };
-  }, [options]);
-}
-
-// ---------------- component ----------------
-
-export default function PeoplePickerComponent(props: PeoplePickerProps): JSX.Element {
+export default function DropdownComponent(props: DropdownProps): JSX.Element {
   const {
     id,
-    displayName,
-    placeholder,
-    isRequired: requiredProp,
-    disabled: disabledProp,
-    multiselect,
-    options = [],
     starterValue,
-    onSearch,
+    displayName,
+    isRequired: requiredProp = false,
+    placeholder,
+    multiselect = false, // v9 prop
     fieldType,
+    options,
     className,
     description,
-    submitting,
+    disabled: disabledProp = false,
+    submitting = false,
   } = props;
 
-  const isMulti = !!multiselect;
-  const isUserLike = props.fieldType === 'user' || props.fieldType === 'lookup';
+  const isLookup = fieldType === 'lookup';
 
-  const { FormData, GlobalFormData, FormMode, GlobalErrorHandle } =
-    React.useContext(DynamicFormContext);
+  const {
+    FormData,
+    GlobalFormData,
+    FormMode,
+    GlobalErrorHandle,
+    AllDisableFields,
+    AllHiddenFields,
+    userBasedPerms,
+    curUserInfo,
+    listCols,
+  } = React.useContext(DynamicFormContext);
 
   const [isRequired, setIsRequired] = React.useState<boolean>(!!requiredProp);
   const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabledProp);
+  const [isHidden, setIsHidden] = React.useState<boolean>(false);
+
+  const [selectedOptions, setSelectedOptions] = React.useState<string[]>([]);
   const [error, setError] = React.useState<string>('');
   const [touched, setTouched] = React.useState<boolean>(false);
 
-  // Local options: initial + async search results
-  const [localOptions, setLocalOptions] = React.useState<PersonOption[]>(options);
-
-  // selections are stored as string keys to match Option values
-  const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);      // multi
-  const [selectedKey, setSelectedKey] = React.useState<string | null>(null); // single
-
-  // maps based on current localOptions
-  const { keyToText, keyToSub, keyToNumber } = useOptionMaps(localOptions);
-
-  // single place to mirror UI error -> global error (null when empty)
+  // Mirror error -> GlobalErrorHandle (null when empty)
   const reportError = React.useCallback(
     (msg: string) => {
+      const targetId = isLookup ? `${id}Id` : id;
       setError(msg || '');
-      GlobalErrorHandle(id, msg || null);
+      GlobalErrorHandle(targetId, msg || null);
     },
-    [GlobalErrorHandle, id]
+    [GlobalErrorHandle, id, isLookup]
   );
 
-  // reflect external required/disabled props
   React.useEffect(() => {
     setIsRequired(!!requiredProp);
     setIsDisabled(!!disabledProp);
   }, [requiredProp, disabledProp]);
 
-  // submitting disables (own effect)
+  // Submitting disables the field
   React.useEffect(() => {
-    if (submitting === true) setIsDisabled(true);
+    if (submitting) setIsDisabled(true);
   }, [submitting]);
 
-  // keep localOptions in sync if props.options changes
+  // Prefill + rules + display mode
   React.useEffect(() => {
-    setLocalOptions(options);
-  }, [options]);
+    const ensureInOptions = (vals: string[]) => clampToExisting(vals, options);
 
-  // prefill (New vs Edit/View)
-  React.useEffect(() => {
-    const ensureInOptions = (vals: string[]) => clampToExisting(vals, localOptions);
-
-    if (FormMode == 8) {
-      if (isMulti) {
-        const initArr =
-          starterValue != null
-            ? (Array.isArray(starterValue) ? starterValue.map(toKey) : [toKey(starterValue)])
-            : [];
-        const clamped = ensureInOptions(initArr);
-        setSelectedKeys(clamped);
-        setSelectedKey(null);
-      } else {
-        const init = starterValue != null ? toKey(starterValue) : '';
-        const clamped = ensureInOptions(init ? [init] : []);
-        setSelectedKey(clamped[0] ?? null);
-        setSelectedKeys([]);
-      }
+    if (FormMode === 8) {
+      const initArr = starterValue
+        ? Array.isArray(starterValue)
+          ? starterValue.map(toKey)
+          : [toKey(starterValue)]
+        : [];
+      setSelectedOptions(ensureInOptions(initArr));
     } else {
       const raw = FormData
-        ? (isUserLike ? (FormData as any)[`${id}Id`] : (FormData as any)[id])
+        ? (isLookup ? (FormData as any)[`${id}Id`] : (FormData as any)[id])
         : undefined;
+      const arr = ensureInOptions(normalizeToStringArray(raw));
+      setSelectedOptions(arr);
+    }
 
-      if (isMulti) {
-        const arr = ensureInOptions(normalizeToStringArray(raw));
-        setSelectedKeys(arr);
-        setSelectedKey(null);
-      } else {
-        const arr = ensureInOptions(normalizeToStringArray(raw));
-        setSelectedKey(arr[0] ?? null);
-        setSelectedKeys([]);
+    if (FormMode === 4) {
+      setIsDisabled(true);
+    } else {
+      const formFieldProps: FormFieldsProps = {
+        disabledList: AllDisableFields,
+        hiddenList: AllHiddenFields,
+        userBasedList: userBasedPerms,
+        curUserList: curUserInfo,
+        curField: displayName,
+        formStateData: FormData,
+        listColumns: listCols,
+      } as any;
+
+      const results = formFieldsSetup(formFieldProps) || [];
+      if (results.length > 0) {
+        for (let i = 0; i < results.length; i++) {
+          if (results[i].isDisabled !== undefined) setIsDisabled(results[i].isDisabled);
+          if (results[i].isHidden !== undefined) setIsHidden(results[i].isHidden);
+        }
       }
     }
 
-    // clear any previous errors
     reportError('');
     setTouched(false);
-  }, [FormData, FormMode, starterValue, localOptions, isUserLike, id, isMulti, reportError]);
+  }, [
+    FormData,
+    FormMode,
+    starterValue,
+    options,
+    isLookup,
+    id,
+    displayName,
+    AllDisableFields,
+    AllHiddenFields,
+    userBasedPerms,
+    curUserInfo,
+    listCols,
+    reportError,
+  ]);
 
-  // ---- search handling (optional) ----
-  const handleInputChange = React.useCallback(
-    async (_e: unknown, data: { value: string }) => {
-      const q = data?.value ?? '';
-      if (!onSearch) return;                 // static options only
-      try {
-        const results = await onSearch(q);   // expected as PersonOption[]
-        // merge by key (keep unique)
-        const map = new Map<string, PersonOption>();
-        for (const o of results) map.set(toKey(o.key), o);
-        for (const o of localOptions) map.set(toKey(o.key), o);
-        setLocalOptions(Array.from(map.values()));
-      } catch {
-        // ignore search errors for now
-      }
-    },
-    [onSearch, localOptions]
-  );
-
-  // ---- validation & commit ----
+  // Validate and commit value
   const validate = React.useCallback((): string => {
-    if (isRequired) {
-      if (isMulti && selectedKeys.length === 0) return 'This is a required field and cannot be blank!';
-      if (!isMulti && !selectedKey) return 'This is a required field and cannot be blank!';
-    }
+    if (isRequired && selectedOptions.length === 0) return REQUIRED_MSG;
     return '';
-  }, [isRequired, isMulti, selectedKeys, selectedKey]);
+  }, [isRequired, selectedOptions]);
 
   const commitValue = React.useCallback(() => {
     const err = validate();
     reportError(err);
 
-    if (isUserLike) {
-      // Commit numeric IDs (SharePoint person/lookup pattern)
-      const valueForCommit = isMulti
-        ? selectedKeys
-            .map(k => keyToNumber.get(k))
-            .filter((n): n is number => typeof n === 'number')
-        : selectedKey
-        ? keyToNumber.get(selectedKey) ?? null
-        : null;
-      GlobalFormData(id, valueForCommit);
+    const targetId = isLookup ? `${id}Id` : id;
+    if (isLookup) {
+      const nums = selectedOptions
+        .map(k => Number(k))
+        .filter(n => Number.isFinite(n));
+      GlobalFormData(targetId, multiselect ? nums : nums[0] ?? null);
     } else {
-      // Non-user: commit string(s); single uses null when empty
-      const valueForCommit = isMulti ? selectedKeys : (selectedKey ? selectedKey : null);
-      GlobalFormData(id, valueForCommit);
+      GlobalFormData(targetId, multiselect ? selectedOptions : selectedOptions[0] ?? null);
     }
-  }, [validate, reportError, isUserLike, isMulti, selectedKeys, selectedKey, keyToNumber, GlobalFormData, id]);
+  }, [validate, reportError, GlobalFormData, id, isLookup, multiselect, selectedOptions]);
 
-  // ---- selection handlers ----
   const handleOptionSelect = (
     _e: unknown,
-    data: { selectedOptions: (string | number)[]; optionValue?: string | number }
+    data: { optionValue?: string | number; selectedOptions: (string | number)[] }
   ) => {
-    if (isMulti) {
-      const next = (data.selectedOptions ?? []).map(toKey);
-      setSelectedKeys(next);
-      if (touched) reportError(isRequired && next.length === 0 ? 'This is a required field and cannot be blank!' : '');
-    } else {
-      const nextVal = data.optionValue != null ? toKey(data.optionValue) : null;
-      setSelectedKey(nextVal);
-      if (touched) reportError(isRequired && !nextVal ? 'This is a required field and cannot be blank!' : '');
-    }
+    const next = (data.selectedOptions ?? []).map(toKey);
+    setSelectedOptions(next);
+    if (touched) reportError(isRequired && next.length === 0 ? REQUIRED_MSG : '');
   };
 
   const handleBlur = () => {
@@ -257,48 +199,40 @@ export default function PeoplePickerComponent(props: PeoplePickerProps): JSX.Ele
     commitValue();
   };
 
-  // ---- display text (semicolon for multi) ----
-  const selectedOptions = isMulti ? selectedKeys : (selectedKey ? [selectedKey] : []);
-  const displayText = isMulti
-    ? (selectedKeys.length ? selectedKeys.map(k => keyToText.get(k) ?? k).join('; ') : '')
-    : (selectedKey ? (keyToText.get(selectedKey) ?? selectedKey) : '');
-  const effectivePlaceholder = displayText || placeholder;
-
+  const displayText = selectedOptions.length ? selectedOptions.join('; ') : '';
+  const effectivePlaceholder = displayText || placeholder || '';
   const hasError = !!error;
 
   return (
-    <Field
-      label={displayName}
-      required={isRequired}
-      validationMessage={hasError ? error : undefined}
-      validationState={hasError ? 'error' : undefined}
-    >
-      <Combobox
-        id={id}
-        placeholder={effectivePlaceholder}
-        disabled={isDisabled}
-        multiselect={isMulti}
-        // typing/search
-        onInputChange={handleInputChange}
-        // selection
-        selectedOptions={selectedOptions}
-        onOptionSelect={handleOptionSelect}
-        onBlur={handleBlur}
-        className={className}
+    <div style={{ display: isHidden ? 'none' : 'block' }}>
+      <Field
+        label={displayName}
+        required={isRequired}
+        validationMessage={hasError ? error : undefined}
+        validationState={hasError ? 'error' : undefined}
       >
-        {localOptions.map(o => {
-          const value = toKey(o.key);
-          const label = o.text;
-          const secondary = keyToSub.get(value);
-        return (
-            <Option key={value} value={value} text={label}>
-              {secondary ? `${label} — ${secondary}` : label}
+        <Dropdown
+          id={id}
+          placeholder={effectivePlaceholder}
+          multiselect={multiselect}
+          disabled={isDisabled}
+          inlinePopup={true}
+          selectedOptions={selectedOptions}
+          onOptionSelect={handleOptionSelect}
+          onBlur={handleBlur}
+          className={className}
+        >
+          {options.map(o => (
+            <Option key={toKey(o.key)} value={toKey(o.key)}>
+              {o.text}
             </Option>
-          );
-        })}
-      </Combobox>
+          ))}
+        </Dropdown>
 
-      {description !== '' && <div className="descriptionText">{description}</div>}
-    </Field>
+        {description && (
+          <div className="descriptionText">{description}</div>
+        )}
+      </Field>
+    </div>
   );
 }
