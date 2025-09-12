@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Field, Dropdown, Option } from '@fluentui/react-components';
+import { Field, Dropdown, Option, Input } from '@fluentui/react-components';
 import { DynamicFormContext } from './DynamicFormContext';
 import formFieldsSetup, { FormFieldsProps } from './formFieldBased';
 
@@ -77,6 +77,11 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
   const [error, setError] = React.useState<string>('');
   const [touched, setTouched] = React.useState<boolean>(false);
 
+  // Locks selection/display on submit or display mode to prevent re-init wiping visible value
+  const [displayOverride, setDisplayOverride] = React.useState<string>('');
+  const isLockedRef = React.useRef<boolean>(false);
+  const didInitRef = React.useRef<boolean>(false);
+
   const keyToText = React.useMemo(() => {
     const m = new Map<string, string>();
     for (const o of options) m.set(toKey(o.key), o.text);
@@ -97,30 +102,57 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     setIsDisabled(!!disabledProp);
   }, [requiredProp, disabledProp]);
 
+  // When submitting turns true, disable and lock current display
   React.useEffect(() => {
-    if (submitting) setIsDisabled(true);
-  }, [submitting]);
+    if (submitting) {
+      setIsDisabled(true);
+      isLockedRef.current = true;
+      // Cache current display text on submit
+      const labels = selectedOptions.map(k => keyToText.get(k) ?? k);
+      setDisplayOverride(labels.join('; '));
+    }
+  }, [submitting, selectedOptions, keyToText]);
 
+  // Initial prefill and rule-based disable/hide. Guarded to avoid wiping selection after lock.
   React.useEffect(() => {
     const ensureInOptions = (vals: string[]) => clampToExisting(vals, options);
 
-    if (FormMode === 8) {
-      const initArr = starterValue
-        ? Array.isArray(starterValue)
-          ? starterValue.map(toKey)
-          : [toKey(starterValue)]
-        : [];
-      setSelectedOptions(ensureInOptions(initArr));
-    } else {
-      const raw = FormData
-        ? (isLookup ? (FormData as any)[`${id}Id`] : (FormData as any)[id])
-        : undefined;
-      const arr = ensureInOptions(normalizeToStringArray(raw));
-      setSelectedOptions(arr);
+    // Only compute prefill if not locked (e.g., not after submit/display mode)
+    if (!isLockedRef.current) {
+      if (!didInitRef.current) {
+        // First-time init (mount)
+        if (FormMode === 8) {
+          const initArr = starterValue
+            ? Array.isArray(starterValue)
+              ? starterValue.map(toKey)
+              : [toKey(starterValue)]
+            : [];
+          setSelectedOptions(ensureInOptions(initArr));
+        } else {
+          const raw = FormData
+            ? (isLookup ? (FormData as any)[`${id}Id`] : (FormData as any)[id])
+            : undefined;
+          const arr = ensureInOptions(normalizeToStringArray(raw));
+          setSelectedOptions(arr);
+        }
+        didInitRef.current = true;
+      } else {
+        // Subsequent updates (e.g., options change)
+        // Only adjust selection if it has become invalid due to options shrinking.
+        const clamped = ensureInOptions(selectedOptions);
+        if (clamped.length !== selectedOptions.length) {
+          setSelectedOptions(clamped);
+        }
+      }
     }
 
+    // Compute disabled/hidden state
     if (FormMode === 4) {
       setIsDisabled(true);
+      isLockedRef.current = true;
+      // Cache current joined text for display mode
+      const labels = selectedOptions.map(k => keyToText.get(k) ?? k);
+      setDisplayOverride(labels.join('; '));
     } else {
       const formFieldProps: FormFieldsProps = {
         disabledList: AllDisableFields,
@@ -139,6 +171,11 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
           if (results[i].isHidden !== undefined) setIsHidden(results[i].isHidden);
         }
       }
+      // If we toggled disabled via rules, and are now disabled, cache display
+      if (!isLockedRef.current && isDisabled) {
+        const labels = selectedOptions.map(k => keyToText.get(k) ?? k);
+        setDisplayOverride(labels.join('; '));
+      }
     }
 
     reportError('');
@@ -156,6 +193,9 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     userBasedPerms,
     curUserInfo,
     listCols,
+    isDisabled,
+    selectedOptions,
+    keyToText,
     reportError,
   ]);
 
@@ -177,7 +217,11 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     } else {
       GlobalFormData(targetId, multiselect ? selectedOptions : selectedOptions[0] ?? null);
     }
-  }, [validate, reportError, GlobalFormData, id, isLookup, multiselect, selectedOptions]);
+
+    // After committing, if we're about to disable (submit) or already disabled, set the display cache
+    const labels = selectedOptions.map(k => keyToText.get(k) ?? k);
+    setDisplayOverride(labels.join('; '));
+  }, [validate, reportError, GlobalFormData, id, isLookup, multiselect, selectedOptions, keyToText]);
 
   const handleOptionSelect = (
     _e: unknown,
@@ -193,15 +237,10 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     commitValue();
   };
 
-  // Build semicolon-separated label from selected option texts
+  // Semicolon-joined labels for display
   const selectedLabels = selectedOptions.map(k => keyToText.get(k) ?? k);
   const joinedText = selectedLabels.join('; ');
-
-  // When disabled, explicitly show the joined text in the trigger.
-  // When enabled, let the component handle its normal rendering.
-  const controlValue = isDisabled ? joinedText : undefined;
-  const placeholderValue = isDisabled ? joinedText : (placeholder || '');
-
+  const visibleText = displayOverride || joinedText;
   const hasError = !!error;
 
   return (
@@ -212,32 +251,46 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
         validationMessage={hasError ? error : undefined}
         validationState={hasError ? 'error' : undefined}
       >
-        <Dropdown
-          id={id}
-          multiselect={multiselect}
-          disabled={isDisabled}
-          inlinePopup={true}
-          selectedOptions={selectedOptions}
-          onOptionSelect={handleOptionSelect}
-          onBlur={handleBlur}
-          className={className}
-          value={controlValue}             // force visible text when disabled
-          placeholder={placeholderValue}   // mirrors the same text for consistency
-          title={joinedText}
-          aria-label={joinedText || displayName}
-        >
-          {options.map(o => (
-            <Option key={toKey(o.key)} value={toKey(o.key)}>
-              {o.text}
-            </Option>
-          ))}
-        </Dropdown>
+        {/* When disabled or locked, show a read-only Input with the exact semicolon text.
+            This guarantees the chosen values remain visible even after submit. */}
+        {isDisabled ? (
+          <Input
+            id={id}
+            readOnly
+            value={visibleText}
+            placeholder={visibleText || placeholder || ''}
+            className={className}
+          />
+        ) : (
+          <Dropdown
+            id={id}
+            multiselect={multiselect}
+            disabled={false}
+            inlinePopup={true}
+            selectedOptions={selectedOptions}
+            onOptionSelect={handleOptionSelect}
+            onBlur={handleBlur}
+            className={className}
+            // Control trigger text to enforce semicolons while enabled as well
+            value={joinedText}
+            placeholder={joinedText || placeholder || ''}
+            title={joinedText}
+            aria-label={joinedText || displayName}
+          >
+            {options.map(o => (
+              <Option key={toKey(o.key)} value={toKey(o.key)}>
+                {o.text}
+              </Option>
+            ))}
+          </Dropdown>
+        )}
 
         {description && <div className="descriptionText">{description}</div>}
       </Field>
     </div>
   );
 }
+
 
 
 
