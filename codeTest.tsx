@@ -73,11 +73,12 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
   const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabledProp);
   const [isHidden, setIsHidden] = React.useState<boolean>(false);
 
+  // Controlled selection state (always an array)
   const [selectedOptions, setSelectedOptions] = React.useState<string[]>([]);
   const [error, setError] = React.useState<string>('');
   const [touched, setTouched] = React.useState<boolean>(false);
 
-  // Locks selection/display on submit or display mode to prevent re-init wiping visible value
+  // Cache of visible text when locked/disabled so it stays visible
   const [displayOverride, setDisplayOverride] = React.useState<string>('');
   const isLockedRef = React.useRef<boolean>(false);
   const didInitRef = React.useRef<boolean>(false);
@@ -102,25 +103,22 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     setIsDisabled(!!disabledProp);
   }, [requiredProp, disabledProp]);
 
-  // When submitting turns true, disable and lock current display
+  // Submitting disables and locks the display text
   React.useEffect(() => {
     if (submitting) {
       setIsDisabled(true);
       isLockedRef.current = true;
-      // Cache current display text on submit
       const labels = selectedOptions.map(k => keyToText.get(k) ?? k);
       setDisplayOverride(labels.join('; '));
     }
   }, [submitting, selectedOptions, keyToText]);
 
-  // Initial prefill and rule-based disable/hide. Guarded to avoid wiping selection after lock.
+  // Prefill and rule-based disable/hide, guarded so submit/display mode won't wipe selection
   React.useEffect(() => {
     const ensureInOptions = (vals: string[]) => clampToExisting(vals, options);
 
-    // Only compute prefill if not locked (e.g., not after submit/display mode)
     if (!isLockedRef.current) {
       if (!didInitRef.current) {
-        // First-time init (mount)
         if (FormMode === 8) {
           const initArr = starterValue
             ? Array.isArray(starterValue)
@@ -137,8 +135,6 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
         }
         didInitRef.current = true;
       } else {
-        // Subsequent updates (e.g., options change)
-        // Only adjust selection if it has become invalid due to options shrinking.
         const clamped = ensureInOptions(selectedOptions);
         if (clamped.length !== selectedOptions.length) {
           setSelectedOptions(clamped);
@@ -146,11 +142,9 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
       }
     }
 
-    // Compute disabled/hidden state
     if (FormMode === 4) {
       setIsDisabled(true);
       isLockedRef.current = true;
-      // Cache current joined text for display mode
       const labels = selectedOptions.map(k => keyToText.get(k) ?? k);
       setDisplayOverride(labels.join('; '));
     } else {
@@ -171,7 +165,6 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
           if (results[i].isHidden !== undefined) setIsHidden(results[i].isHidden);
         }
       }
-      // If we toggled disabled via rules, and are now disabled, cache display
       if (!isLockedRef.current && isDisabled) {
         const labels = selectedOptions.map(k => keyToText.get(k) ?? k);
         setDisplayOverride(labels.join('; '));
@@ -204,21 +197,32 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     return '';
   }, [isRequired, selectedOptions]);
 
+  // Commit to API: send null when empty (also numbers for lookup)
   const commitValue = React.useCallback(() => {
     const err = validate();
     reportError(err);
 
     const targetId = isLookup ? `${id}Id` : id;
+
     if (isLookup) {
       const nums = selectedOptions
         .map(k => Number(k))
         .filter(n => Number.isFinite(n));
-      GlobalFormData(targetId, multiselect ? nums : nums[0] ?? null);
+      GlobalFormData(
+        targetId,
+        nums.length === 0 ? null : multiselect ? nums : nums[0]
+      );
     } else {
-      GlobalFormData(targetId, multiselect ? selectedOptions : selectedOptions[0] ?? null);
+      GlobalFormData(
+        targetId,
+        selectedOptions.length === 0
+          ? null
+          : multiselect
+          ? selectedOptions
+          : selectedOptions[0]
+      );
     }
 
-    // After committing, if we're about to disable (submit) or already disabled, set the display cache
     const labels = selectedOptions.map(k => keyToText.get(k) ?? k);
     setDisplayOverride(labels.join('; '));
   }, [validate, reportError, GlobalFormData, id, isLookup, multiselect, selectedOptions, keyToText]);
@@ -237,10 +241,12 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     commitValue();
   };
 
-  // Semicolon-joined labels for display
+  // Semicolon-joined labels for display (always defined strings)
   const selectedLabels = selectedOptions.map(k => keyToText.get(k) ?? k);
   const joinedText = selectedLabels.join('; ');
   const visibleText = displayOverride || joinedText;
+  const triggerText = visibleText || '';
+  const triggerPlaceholder = triggerText || (placeholder || '');
   const hasError = !!error;
 
   return (
@@ -251,14 +257,12 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
         validationMessage={hasError ? error : undefined}
         validationState={hasError ? 'error' : undefined}
       >
-        {/* When disabled or locked, show a read-only Input with the exact semicolon text.
-            This guarantees the chosen values remain visible even after submit. */}
         {isDisabled ? (
           <Input
             id={id}
             readOnly
-            value={visibleText}
-            placeholder={visibleText || placeholder || ''}
+            value={triggerText}
+            placeholder={triggerPlaceholder}
             className={className}
           />
         ) : (
@@ -271,11 +275,10 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
             onOptionSelect={handleOptionSelect}
             onBlur={handleBlur}
             className={className}
-            // Control trigger text to enforce semicolons while enabled as well
-            value={joinedText}
-            placeholder={joinedText || placeholder || ''}
-            title={joinedText}
-            aria-label={joinedText || displayName}
+            value={triggerText}
+            placeholder={triggerPlaceholder}
+            title={triggerText}
+            aria-label={triggerText || displayName}
           >
             {options.map(o => (
               <Option key={toKey(o.key)} value={toKey(o.key)}>
