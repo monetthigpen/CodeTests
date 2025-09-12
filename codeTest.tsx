@@ -27,9 +27,7 @@ function normalizeToStringArray(input: unknown): string[] {
   if (Array.isArray((input as any)?.results)) {
     return ((input as any).results as unknown[]).map(toKey);
   }
-  if (Array.isArray(input)) {
-    return (input as unknown[]).map(toKey);
-  }
+  if (Array.isArray(input)) return (input as unknown[]).map(toKey);
   if (typeof input === 'string' && input.includes(';')) {
     return input.split(';').map(s => toKey(s.trim())).filter(Boolean);
   }
@@ -195,10 +193,15 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     commitValue();
   };
 
-  // Build a semicolon-separated label from the selected option texts.
-  // This is rendered as the control's visible value so the joined text remains visible even after disabling.
+  // Build semicolon-separated label from selected option texts
   const selectedLabels = selectedOptions.map(k => keyToText.get(k) ?? k);
-  const displayText = selectedLabels.join('; ');
+  const joinedText = selectedLabels.join('; ');
+
+  // When disabled, explicitly show the joined text in the trigger.
+  // When enabled, let the component handle its normal rendering.
+  const controlValue = isDisabled ? joinedText : undefined;
+  const placeholderValue = isDisabled ? joinedText : (placeholder || '');
+
   const hasError = !!error;
 
   return (
@@ -218,12 +221,10 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
           onOptionSelect={handleOptionSelect}
           onBlur={handleBlur}
           className={className}
-          // Force the visible text to the semicolon-joined labels.
-          // This keeps the exact text visible when the control is disabled after submit.
-          value={displayText}
-          placeholder={displayText || placeholder || ''}
-          title={displayText}
-          aria-label={displayText || displayName}
+          value={controlValue}             // force visible text when disabled
+          placeholder={placeholderValue}   // mirrors the same text for consistency
+          title={joinedText}
+          aria-label={joinedText || displayName}
         >
           {options.map(o => (
             <Option key={toKey(o.key)} value={toKey(o.key)}>
