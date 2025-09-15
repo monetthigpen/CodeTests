@@ -1,89 +1,55 @@
 import * as React from 'react';
-import { Field, Dropdown, Option, Input } from '@fluentui/react-components';
+import { Field, Dropdown, Option } from '@fluentui/react-components';
 import { DynamicFormContext } from './DynamicFormContext';
 import formFieldsSetup, { FormFieldsProps } from './formFieldBased';
 
-// Derive handler types directly from the Dropdown component
-type OnOptionSelect = NonNullable<React.ComponentProps<typeof Dropdown>['onOptionSelect']>;
-type OnOptionSelectEvent = Parameters<OnOptionSelect>[0];
-type OnOptionSelectData = Parameters<OnOptionSelect>[1];
-
-type OptionShape = { key: string | number; text: string };
-
 interface DropdownProps {
   id: string;
-  displayName: string;
-  options: OptionShape[];
-
-  // optional inputs
   starterValue?: string | number | Array<string | number>;
-  isRequired?: boolean;
+  displayName: string;
+  isRequired: boolean;
   placeholder?: string;
+  multiSelect?: boolean;  // v8 prop
+  multiselect?: boolean;  // v9 prop
+  fieldType?: string;     // "lookup" to commit under `${id}Id` as numbers
+  options: { key: string | number; text: string }[];
   className?: string;
   description?: string;
-  fieldType?: string;          // 'lookup' -> commit under `${id}Id` as numbers
-  multiselect?: boolean;       // v9 prop
-  multiSelect?: boolean;       // alias (older usage)
   disabled?: boolean;
   submitting?: boolean;
-  locale?: string;             // parent passes this in some usages (avoid JSX type error)
 }
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
 
 const toKey = (k: unknown): string => (k == null ? '' : String(k));
 
-const normalizeToStringArray = (input: unknown): string[] => {
-  if (input == null) return [];
-  if (typeof input === 'object' && input !== null && Array.isArray((input as { results?: unknown[] }).results)) {
-    return ((input as { results: unknown[] }).results).map(toKey);
-  }
-  if (Array.isArray(input)) return (input as unknown[]).map(toKey);
-  if (typeof input === 'string' && input.includes(';')) {
-    return input.split(';').map(s => toKey(s.trim())).filter(Boolean);
-  }
-  return [toKey(input)];
-};
-
-const clampToExisting = (values: string[], opts: OptionShape[]): string[] => {
-  const allowed = new Set(opts.map(o => toKey(o.key)));
-  return values.filter(v => allowed.has(v));
-};
-
 export default function DropdownComponent(props: DropdownProps): JSX.Element {
   const {
     id,
-    displayName,
-    options,
     starterValue,
-    isRequired = false,
+    displayName,
+    isRequired,
     placeholder,
+    multiSelect,
+    multiselect,
+    fieldType,
+    options,
     className,
     description,
-    fieldType,
-    multiselect,
-    multiSelect,
-    disabled = false,
-    submitting = false,
+    disabled,
+    submitting,
   } = props;
 
-  const isLookup = fieldType === 'lookup';
-  const isMulti = !!(multiselect ?? multiSelect);
-
-  // match your other components: localVal, error, isDisabled, isHidden
-  const [localVal, setLocalVal] = React.useState<string>('');      // semicolon-joined label text
+  const [localVal, setLocalVal] = React.useState<string | string[]>('');
   const [error, setError] = React.useState<string>('');
-  const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabled);
+  const [isDisabled, setIsDisabled] = React.useState<boolean>(disabled ?? false);
   const [isHidden, setIsHidden] = React.useState<boolean>(false);
-
-  // drive Dropdown with selected keys (strings)
-  const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);
 
   const {
     FormData,
     GlobalFormData,
-    GlobalErrorHandle,
     FormMode,
+    GlobalErrorHandle,
     AllDisableFields,
     AllHiddenFields,
     userBasedPerms,
@@ -91,40 +57,65 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     listCols,
   } = React.useContext(DynamicFormContext);
 
-  // key -> label
-  const keyToText = React.useMemo(() => {
-    const m = new Map<string, string>();
-    for (const o of options) m.set(toKey(o.key), o.text);
-    return m;
-  }, [options]);
-
-  const textFromKeys = React.useCallback(
-    (arr: string[]): string => arr.map(k => keyToText.get(k) ?? k).join(';'),
-    [keyToText]
-  );
-
-  // -------------------- useEffect #1: Initial prefill + rules (runs once) --------------------
-  React.useEffect(() => {
-    // prefill selection
-    let initKeys: string[] = [];
-    if (FormMode === 8) {
-      initKeys =
-        starterValue == null
-          ? []
-          : Array.isArray(starterValue)
-            ? (starterValue as (string | number)[]).map(toKey)
-            : [toKey(starterValue)];
+  // Handle blur
+  const handleBlur = (e: React.FocusEvent<HTMLElement>): void => {
+    if ((Array.isArray(localVal) && localVal.length === 0) || localVal === '') {
+      if (isRequired) {
+        setError(REQUIRED_MSG);
+        GlobalErrorHandle(id, REQUIRED_MSG);
+      } else {
+        setError('');
+        // SharePoint requires null for empty values
+        // eslint-disable-next-line @rushstack/no-new-null
+        GlobalErrorHandle(id, null);
+      }
     } else {
-      const raw = (FormData as any)
-        ? (isLookup ? (FormData as any)[`${id}Id`] : (FormData as any)[id])
-        : undefined;
-      initKeys = normalizeToStringArray(raw);
+      setError('');
+      // eslint-disable-next-line @rushstack/no-new-null
+      GlobalErrorHandle(id, null);
     }
-    initKeys = clampToExisting(initKeys, options);
-    setSelectedKeys(initKeys);
-    setLocalVal(textFromKeys(initKeys));
+  };
 
-    // rules
+  // Handle change
+  const handleChange = (e: React.ChangeEvent<HTMLSelectElement>): void => {
+    const value = e.target.value;
+    setLocalVal(value);
+
+    if (value === '') {
+      if (isRequired) {
+        setError(REQUIRED_MSG);
+        GlobalErrorHandle(id, REQUIRED_MSG);
+      } else {
+        setError('');
+        // eslint-disable-next-line @rushstack/no-new-null
+        GlobalErrorHandle(id, null);
+      }
+    } else {
+      setError('');
+      GlobalFormData(id, value);
+      // eslint-disable-next-line @rushstack/no-new-null
+      GlobalErrorHandle(id, null);
+    }
+  };
+
+  // Initial value load
+  React.useEffect((): void => {
+    if (FormMode === 4 || FormMode === 6) {
+      const fldInternalName = id;
+      if (FormData !== undefined) {
+        const fieldValue = FormData[fldInternalName];
+        if (fieldValue !== null && fieldValue !== undefined) {
+          setLocalVal(fieldValue);
+        }
+      }
+    } else if (FormMode === 8 && starterValue !== undefined) {
+      setLocalVal(starterValue as string);
+      GlobalFormData(id, starterValue);
+    }
+  }, [FormMode, FormData, id, starterValue, GlobalFormData]);
+
+  // Disable/hide logic
+  React.useEffect((): void => {
     if (FormMode === 4) {
       setIsDisabled(true);
     } else {
@@ -136,108 +127,60 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
         curField: displayName,
         formStateData: FormData,
         listColumns: listCols,
-      } as any;
+      };
 
-      const results = formFieldsSetup(formFieldProps) || [];
-      for (const r of results) {
-        if (r.isDisabled !== undefined) setIsDisabled(!!r.isDisabled);
-        if (r.isHidden !== undefined) setIsHidden(!!r.isHidden);
+      const results = formFieldsSetup(formFieldProps);
+      if (results.length > 0) {
+        for (let i = 0; i < results.length; i++) {
+          if (results[i].isDisabled !== undefined) {
+            setIsDisabled(results[i].isDisabled);
+          }
+          if (results[i].isHidden !== undefined) {
+            setIsHidden(results[i].isHidden);
+          }
+        }
       }
     }
+  }, [FormMode, AllDisableFields, AllHiddenFields, userBasedPerms, curUserInfo, displayName, FormData, listCols]);
 
-    // reset error at init
-    setError('');
-    GlobalErrorHandle(isLookup ? `${id}Id` : id, null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // -------------------- useEffect #2: submitting -> disable & keep visible text --------------------
-  React.useEffect(() => {
-    if (submitting) {
+  // Submit disable
+  React.useEffect((): void => {
+    if (submitting === true) {
       setIsDisabled(true);
-      setLocalVal(textFromKeys(selectedKeys)); // keep value shown after disable
     }
-  }, [submitting, selectedKeys, textFromKeys]);
-
-  // -------------------- handlers --------------------
-  const handleChange = (_e: OnOptionSelectEvent, data: OnOptionSelectData): void => {
-    const next = (data.selectedOptions ?? []).map(v => String(v));
-    setSelectedKeys(next);
-    setLocalVal(textFromKeys(next));
-  };
-
-  const handleBlur = (): void => {
-    // validate
-    if (isRequired && selectedKeys.length === 0) {
-      setError(REQUIRED_MSG);
-      GlobalErrorHandle(isLookup ? `${id}Id` : id, REQUIRED_MSG);
-      // eslint-disable-next-line @rushstack/no-new-null
-      GlobalFormData(isLookup ? `${id}Id` : id, null);
-      return;
-    }
-
-    setError('');
-    GlobalErrorHandle(isLookup ? `${id}Id` : id, null);
-
-    // commit value (null when empty, numbers for lookup)
-    if (isLookup) {
-      const nums = selectedKeys.map(k => Number(k)).filter((n): n is number => Number.isFinite(n));
-      // eslint-disable-next-line @rushstack/no-new-null
-      GlobalFormData(`${id}Id`, nums.length === 0 ? null : (isMulti ? nums : nums[0]));
-    } else {
-      // eslint-disable-next-line @rushstack/no-new-null
-      GlobalFormData(id, selectedKeys.length === 0 ? null : (isMulti ? selectedKeys : selectedKeys[0]));
-    }
-  };
-
-  // -------------------- render --------------------
-  const effectivePlaceholder = localVal || placeholder || '';
-  const disabledClass = isDisabled ? 'is-disabled' : '';
-  const rootClassName = [className, disabledClass].filter(Boolean).join(' ');
+  }, [submitting]);
 
   return (
     <div style={{ display: isHidden ? 'none' : 'block' }}>
       <Field
         label={displayName}
         {...(isRequired && { required: true })}
-        validationMessage={error}
+        validationMessage={error || undefined}
         validationState={error ? 'error' : undefined}
       >
-        {isDisabled ? (
-          <Input
-            id={id}
-            type="text"
-            value={localVal}
-            disabled
-            className={rootClassName}
-            placeholder={effectivePlaceholder}
-          />
-        ) : (
-          <Dropdown
-            id={id}
-            multiselect={isMulti}
-            inlinePopup={true}
-            className={rootClassName}
-            value={localVal}
-            placeholder={effectivePlaceholder}
-            selectedOptions={selectedKeys}
-            onOptionSelect={handleChange}
-            onBlur={handleBlur}
-          >
-            {options.map(o => (
-              <Option key={toKey(o.key)} value={toKey(o.key)}>
-                {o.text}
-              </Option>
-            ))}
-          </Dropdown>
+        <Dropdown
+          id={id}
+          className={className}
+          placeholder={placeholder}
+          value={localVal}
+          disabled={isDisabled}
+          inlinePopup={true}
+          onBlur={handleBlur}
+          onChange={handleChange}
+        >
+          {options.map((o) => (
+            <Option key={toKey(o.key)} value={toKey(o.key)}>
+              {o.text}
+            </Option>
+          ))}
+        </Dropdown>
+        {description && (
+          <div className="descriptionText">{description}</div>
         )}
-
-        {description ? <div className="descriptionText">{description}</div> : null}
       </Field>
     </div>
   );
 }
-
 
 
 
