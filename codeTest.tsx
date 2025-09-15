@@ -1,152 +1,150 @@
 import * as React from 'react';
-import { Field, Dropdown, Option, Input } from '@fluentui/react-components';
+import { Field, Dropdown, Option, Input, DropdownOnOptionSelectData } from '@fluentui/react-components';
 import { DynamicFormContext } from './DynamicFormContext';
 import formFieldsSetup, { FormFieldsProps } from './formFieldBased';
 
+interface OptionItem { key: string | number; text: string; }
+
 interface DropdownProps {
   id: string;
-  starterValue?: string | number | Array<string | number>;
   displayName: string;
+  options: OptionItem[];
+  starterValue?: string | number | Array<string | number>;
   isRequired?: boolean;
   placeholder?: string;
-  multiselect?: boolean;  // v9 prop
-  fieldType?: string;     // 'lookup' => commit under `${id}Id` as numbers
-  options: { key: string | number; text: string }[];
   className?: string;
   description?: string;
-  disabled?: boolean;
-  submitting?: boolean;
+  fieldType?: string;        // 'lookup' => commit under `${id}Id` as numbers
+  multiselect?: boolean;     // v9 prop
+  submitting?: boolean;      // matches your TextArea pattern
 }
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
 
 const toKey = (k: unknown): string => (k == null ? '' : String(k));
 
-function normalizeToStringArray(input: unknown): string[] {
+const normalizeToStringArray = (input: unknown): string[] => {
   if (input == null) return [];
-  if (Array.isArray((input as any)?.results)) {
+  if (typeof input === 'object' && (input as any).results && Array.isArray((input as any).results)) {
     return ((input as any).results as unknown[]).map(toKey);
   }
   if (Array.isArray(input)) return (input as unknown[]).map(toKey);
-  if (typeof input === 'string' && input.includes(';')) {
-    return input.split(';').map(s => toKey(s.trim())).filter(Boolean);
-  }
   return [toKey(input)];
-}
-
-function clampToExisting(values: string[], opts: { key: string | number }[]): string[] {
-  const allowed = new Set(opts.map(o => toKey(o.key)));
-  return values.filter(v => allowed.has(v));
-}
+};
 
 export default function DropdownComponent(props: DropdownProps): JSX.Element {
   const {
     id,
-    starterValue,
     displayName,
-    isRequired: requiredProp = false,
-    placeholder,
-    multiselect = false,
-    fieldType,
     options,
+    starterValue,
+    isRequired: isRequiredProp = false,
+    placeholder,
     className,
     description,
-    disabled: disabledProp = false,
+    fieldType,
+    multiselect = false,
     submitting = false,
   } = props;
 
   const isLookup = fieldType === 'lookup';
 
-  const {
-    FormData,
-    GlobalFormData,
-    FormMode,
-    GlobalErrorHandle,
-    AllDisableFields,
-    AllHiddenFields,
-    userBasedPerms,
-    curUserInfo,
-    listCols,
-  } = React.useContext(DynamicFormContext);
-
-  const [isRequired, setIsRequired] = React.useState<boolean>(!!requiredProp);
-  const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabledProp);
+  // ---- match TextArea state names / layout ----
+  const [localVal, setLocalVal] = React.useState<string>('');        // used for disabled display text
+  const [error, setError] = React.useState<string>('');
+  const [isDisabled, setIsDisabled] = React.useState<boolean>(false);
   const [isHidden, setIsHidden] = React.useState<boolean>(false);
 
-  // Controlled selection
-  const [selectedOptions, setSelectedOptions] = React.useState<string[]>([]);
-  const [error, setError] = React.useState<string>('');
-  const [touched, setTouched] = React.useState<boolean>(false);
+  const {
+    FormData, GlobalFormData, GlobalErrorHandle,
+    FormMode, AllDisableFields, AllHiddenFields,
+    userBasedPerms, curUserInfo, listCols
+  } = React.useContext(DynamicFormContext);
 
-  // Lock/cache for display text when disabled
-  const [displayOverride, setDisplayOverride] = React.useState<string>('');
-  const isLockedRef = React.useRef<boolean>(false);
-  const didInitRef = React.useRef<boolean>(false);
+  // keep selection as strings for v9 selectedOptions
+  const [selected, setSelected] = React.useState<string[]>([]);
 
+  // map key->label for display
   const keyToText = React.useMemo(() => {
     const m = new Map<string, string>();
     for (const o of options) m.set(toKey(o.key), o.text);
     return m;
   }, [options]);
 
-  const reportError = React.useCallback(
-    (msg: string) => {
-      const targetId = isLookup ? `${id}Id` : id;
-      setError(msg || '');
-      GlobalErrorHandle(targetId, msg || null);
-    },
-    [GlobalErrorHandle, id, isLookup]
+  const displayFromSelected = React.useCallback(
+    (arr: string[]) => arr.map(k => keyToText.get(k) ?? k).join('; '),
+    [keyToText]
   );
 
-  React.useEffect(() => {
-    setIsRequired(!!requiredProp);
-    setIsDisabled(!!disabledProp);
-  }, [requiredProp, disabledProp]);
+  const commitToContext = React.useCallback((arr: string[]) => {
+    const targetId = isLookup ? `${id}Id` : id;
 
-  // Submitting disables and locks display text
-  React.useEffect(() => {
-    if (submitting) {
-      setIsDisabled(true);
-      isLockedRef.current = true;
-      const labels = selectedOptions.map(k => keyToText.get(k) ?? k);
-      setDisplayOverride(labels.join('; '));
+    if (arr.length === 0) {
+      // SharePoint expects null when empty
+      // eslint-disable-next-line @rushstack/no-new-null
+      GlobalFormData(targetId, null);
+      GlobalErrorHandle(targetId, props.isRequired ? REQUIRED_MSG : null);
+      return;
     }
-  }, [submitting, selectedOptions, keyToText]);
 
-  // Prefill and rule-based disable/hide
+    if (isLookup) {
+      const nums = arr.map(k => Number(k)).filter(n => Number.isFinite(n));
+      // eslint-disable-next-line @rushstack/no-new-null
+      GlobalFormData(targetId, multiselect ? nums : (nums[0] ?? null));
+    } else {
+      // eslint-disable-next-line @rushstack/no-new-null
+      GlobalFormData(targetId, multiselect ? arr : (arr[0] ?? null));
+    }
+
+    GlobalErrorHandle(targetId, null);
+  }, [GlobalFormData, GlobalErrorHandle, id, isLookup, multiselect, props.isRequired]);
+
+  // ---- handleBlur (mirrors TextArea) ----
+  const handleBlur = (): void => {
+    if (props.isRequired === true && selected.length === 0) {
+      setError(REQUIRED_MSG);
+      GlobalErrorHandle(isLookup ? `${id}Id` : id, REQUIRED_MSG);
+    } else {
+      const joined = displayFromSelected(selected);
+      setLocalVal(joined);
+      setError('');
+      GlobalErrorHandle(isLookup ? `${id}Id` : id, null);
+      commitToContext(selected);
+    }
+  };
+
+  // ---- handleChange (mirrors TextArea) ----
+  const handleChange = (_e: unknown, data: DropdownOnOptionSelectData): void => {
+    const next = (data.selectedOptions ?? []).map(toKey);
+    setSelected(next);
+    setLocalVal(displayFromSelected(next));
+  };
+
+  // ---- Initial render + edit/view prefill (mirrors TextArea) ----
   React.useEffect(() => {
-    const ensureInOptions = (vals: string[]) => clampToExisting(vals, options);
-
-    if (!isLockedRef.current) {
-      if (!didInitRef.current) {
-        if (FormMode === 8) {
-          const initArr = starterValue
-            ? Array.isArray(starterValue)
-              ? starterValue.map(toKey)
-              : [toKey(starterValue)]
-            : [];
-          setSelectedOptions(ensureInOptions(initArr));
-        } else {
-          const raw = FormData
-            ? (isLookup ? (FormData as any)[`${id}Id`] : (FormData as any)[id])
-            : undefined;
-          const arr = ensureInOptions(normalizeToStringArray(raw));
-          setSelectedOptions(arr);
-        }
-        didInitRef.current = true;
-      } else {
-        const clamped = ensureInOptions(selectedOptions);
-        if (clamped.length !== selectedOptions.length) {
-          setSelectedOptions(clamped);
-        }
+    // EditForm or ViewForm
+    if (FormMode === 4 || FormMode === 6) {
+      const fldInternalName = isLookup ? `${id}Id` : id;
+      if (FormData !== undefined) {
+        const fieldValue = (FormData as any)[fldInternalName];
+        const arr = normalizeToStringArray(fieldValue);
+        setSelected(arr);
+        setLocalVal(displayFromSelected(arr));
       }
+    } else {
+      // New form; seed from starterValue if provided
+      const init = starterValue == null
+        ? []
+        : Array.isArray(starterValue)
+          ? (starterValue as (string | number)[]).map(toKey)
+          : [toKey(starterValue)];
+      setSelected(init);
+      setLocalVal(displayFromSelected(init));
     }
 
+    // Disable or enable the field (same pattern as your TextArea)
     if (FormMode === 4) {
       setIsDisabled(true);
-      isLockedRef.current = true;
-      const labels = selectedOptions.map(k => keyToText.get(k) ?? k);
-      setDisplayOverride(labels.join('; '));
     } else {
       const formFieldProps: FormFieldsProps = {
         disabledList: AllDisableFields,
@@ -160,128 +158,54 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
 
       const results = formFieldsSetup(formFieldProps) || [];
       if (results.length > 0) {
-        for (let i = 0; i < results.length; i++) {
+        for (let i = 0; i < results.length; i += 1) {
           if (results[i].isDisabled !== undefined) setIsDisabled(results[i].isDisabled);
           if (results[i].isHidden !== undefined) setIsHidden(results[i].isHidden);
         }
       }
-      if (!isLockedRef.current && isDisabled) {
-        const labels = selectedOptions.map(k => keyToText.get(k) ?? k);
-        setDisplayOverride(labels.join('; '));
-      }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    reportError('');
-    setTouched(false);
-  }, [
-    FormData,
-    FormMode,
-    starterValue,
-    options,
-    isLookup,
-    id,
-    displayName,
-    AllDisableFields,
-    AllHiddenFields,
-    userBasedPerms,
-    curUserInfo,
-    listCols,
-    isDisabled,
-    selectedOptions,
-    keyToText,
-    reportError,
-  ]);
-
-  const validate = React.useCallback((): string => {
-    if (isRequired && selectedOptions.length === 0) return REQUIRED_MSG;
-    return '';
-  }, [isRequired, selectedOptions]);
-
-  // Commit: send null when empty; numbers for lookup
-  const commitValue = React.useCallback(() => {
-    const err = validate();
-    reportError(err);
-
-    const targetId = isLookup ? `${id}Id` : id;
-
-    if (isLookup) {
-      const nums = selectedOptions.map(k => Number(k)).filter(n => Number.isFinite(n));
-      GlobalFormData(targetId, nums.length === 0 ? null : multiselect ? nums : nums[0]);
-    } else {
-      GlobalFormData(
-        targetId,
-        selectedOptions.length === 0 ? null : multiselect ? selectedOptions : selectedOptions[0]
-      );
+  // ---- Submit disable hook (identical to your TextArea) ----
+  React.useEffect(() => {
+    if (props.submitting === true) {
+      setIsDisabled(true);
     }
+  }, [props.submitting]);
 
-    const labels = selectedOptions.map(k => keyToText.get(k) ?? k);
-    setDisplayOverride(labels.join('; '));
-  }, [validate, reportError, GlobalFormData, id, isLookup, multiselect, selectedOptions, keyToText]);
-
-  const handleOptionSelect = (
-    _e: unknown,
-    data: { optionValue?: string | number; selectedOptions: (string | number)[] }
-  ) => {
-    const next = (data.selectedOptions ?? []).map(toKey);
-    setSelectedOptions(next);
-    if (touched) reportError(isRequired && next.length === 0 ? REQUIRED_MSG : '');
-  };
-
-  const handleBlur = () => {
-    setTouched(true);
-    commitValue();
-  };
-
-  // Semicolon-joined labels for display
-  const selectedLabels = selectedOptions.map(k => keyToText.get(k) ?? k);
-  const joinedText = selectedLabels.join('; ');
-  const visibleText = displayOverride || joinedText;
-  const triggerText = visibleText || '';
-  const triggerPlaceholder = triggerText || (placeholder || '');
-  const hasError = !!error;
-
-  // Build class and attributes so parent CSS gray-out continues to work
+  const joined = localVal; // already semicolon-joined
   const disabledClass = isDisabled ? 'is-disabled' : '';
   const rootClassName = [className, disabledClass].filter(Boolean).join(' ');
 
   return (
-    <div
-      style={{ display: isHidden ? 'none' : 'block' }}
-      className={rootClassName}
-      aria-disabled={isDisabled ? 'true' : undefined}
-      data-disabled={isDisabled ? 'true' : undefined}
-    >
+    <div style={{ display: isHidden ? 'none' : 'block' }}>
       <Field
-        label={displayName}
-        required={isRequired}
-        validationMessage={hasError ? error : undefined}
-        validationState={hasError ? 'error' : undefined}
+        label={props.displayName}
+        {...(props.isRequired && { required: true })}
+        validationMessage={error}
+        validationState={error ? 'error' : undefined}
       >
         {isDisabled ? (
-          // Disabled Input to retain gray-out visuals and keep text visible
+          // use disabled Input to keep gray-out and keep value visible
           <Input
-            id={id}
+            id={props.id}
             disabled
-            value={triggerText}
-            placeholder={triggerPlaceholder}
+            value={joined}
+            placeholder={placeholder || ''}
             className={rootClassName}
-            aria-disabled="true"
-            data-disabled="true"
           />
         ) : (
           <Dropdown
-            id={id}
-            multiselect={multiselect}
-            disabled={false}
-            inlinePopup={true}
-            selectedOptions={selectedOptions}
-            onOptionSelect={handleOptionSelect}
-            onBlur={handleBlur}
+            id={props.id}
+            placeholder={placeholder}
+            multiselect={!!multiselect}
+            inlinePopup
             className={rootClassName}
-            value={triggerText}
-            placeholder={triggerPlaceholder}
-            title={triggerText}
-            aria-label={triggerText || displayName}
+            selectedOptions={selected}
+            value={joined}
+            onOptionSelect={handleChange}
+            onBlur={handleBlur}
           >
             {options.map(o => (
               <Option key={toKey(o.key)} value={toKey(o.key)}>
@@ -291,11 +215,14 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
           </Dropdown>
         )}
 
-        {description && <div className="descriptionText">{description}</div>}
+        {props.description !== '' && (
+          <div className="descriptionText">{props.description}</div>
+        )}
       </Field>
     </div>
   );
 }
+
 
 
 
