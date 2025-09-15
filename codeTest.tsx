@@ -3,53 +3,82 @@ import { Field, Dropdown, Option } from '@fluentui/react-components';
 import { DynamicFormContext } from './DynamicFormContext';
 import formFieldsSetup, { FormFieldsProps } from './formFieldBased';
 
-interface DropdownProps {
+// Derive handler types directly from the Dropdown component (version-safe)
+type OnOptionSelect = NonNullable<React.ComponentProps<typeof Dropdown>['onOptionSelect']>;
+type OnOptionSelectEvent = Parameters<OnOptionSelect>[0];
+type OnOptionSelectData = Parameters<OnOptionSelect>[1];
+
+export interface DropdownProps {
   id: string;
-  starterValue?: string | number | Array<string | number>;
   displayName: string;
-  isRequired: boolean;
-  placeholder?: string;
-  multiSelect?: boolean;  // v8 prop
-  multiselect?: boolean;  // v9 prop
-  fieldType?: string;     // "lookup" to commit under `${id}Id` as numbers
   options: { key: string | number; text: string }[];
-  className?: string;
+  starterValue?: string | number | Array<string | number>;
+  isRequired?: boolean;
+  placeholder?: string;
+  className?: string;              // falls back to "fieldClass"
   description?: string;
-  disabled?: boolean;
-  submitting?: boolean;
+  fieldType?: string;              // 'lookup' => commit under `${id}Id` as numbers
+  multiselect?: boolean;           // v9 prop
+  multiSelect?: boolean;           // alias (older usage)
+  disabled?: boolean;              // initial disabled only; rules/submitting can override
+  submitting?: boolean;            // when true => disable
 }
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
-
 const toKey = (k: unknown): string => (k == null ? '' : String(k));
+
+const normalizeToStringArray = (input: unknown): string[] => {
+  if (input == null) return [];
+  if (typeof input === 'object' && input !== null && Array.isArray((input as { results?: unknown[] }).results)) {
+    return ((input as { results: unknown[] }).results).map(toKey);
+  }
+  if (Array.isArray(input)) return (input as unknown[]).map(toKey);
+  if (typeof input === 'string' && input.includes(';')) {
+    return input.split(';').map(s => toKey(s.trim())).filter(Boolean);
+  }
+  return [toKey(input)];
+};
+
+const clampToExisting = (
+  values: string[],
+  opts: Array<{ key: string | number }>
+): string[] => {
+  const allowed = new Set(opts.map(o => toKey(o.key)));
+  return values.filter(v => allowed.has(v));
+};
 
 export default function DropdownComponent(props: DropdownProps): JSX.Element {
   const {
     id,
-    starterValue,
     displayName,
-    isRequired,
-    placeholder,
-    multiSelect,
-    multiselect,
-    fieldType,
     options,
+    starterValue,
+    isRequired = false,
+    placeholder,
     className,
     description,
-    disabled,
-    submitting,
+    fieldType,
+    multiselect,
+    multiSelect,
+    disabled = false,
+    submitting = false,
   } = props;
 
-  const [localVal, setLocalVal] = React.useState<string | string[]>('');
+  const isLookup = fieldType === 'lookup';
+  const isMulti = !!(multiselect ?? multiSelect);
+
+  // Visual/selection state (mirrors your other components)
+  const [localVal, setLocalVal] = React.useState<string>('');      // semicolon-joined labels
+  const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);
   const [error, setError] = React.useState<string>('');
-  const [isDisabled, setIsDisabled] = React.useState<boolean>(disabled ?? false);
+  const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabled);
   const [isHidden, setIsHidden] = React.useState<boolean>(false);
 
   const {
     FormData,
     GlobalFormData,
-    FormMode,
     GlobalErrorHandle,
+    FormMode,
     AllDisableFields,
     AllHiddenFields,
     userBasedPerms,
@@ -57,65 +86,40 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     listCols,
   } = React.useContext(DynamicFormContext);
 
-  // Handle blur
-  const handleBlur = (e: React.FocusEvent<HTMLElement>): void => {
-    if ((Array.isArray(localVal) && localVal.length === 0) || localVal === '') {
-      if (isRequired) {
-        setError(REQUIRED_MSG);
-        GlobalErrorHandle(id, REQUIRED_MSG);
-      } else {
-        setError('');
-        // SharePoint requires null for empty values
-        // eslint-disable-next-line @rushstack/no-new-null
-        GlobalErrorHandle(id, null);
-      }
-    } else {
-      setError('');
-      // eslint-disable-next-line @rushstack/no-new-null
-      GlobalErrorHandle(id, null);
-    }
-  };
+  // key -> label
+  const keyToText = React.useMemo(() => {
+    const m = new Map<string, string>();
+    for (const o of options) m.set(toKey(o.key), o.text);
+    return m;
+  }, [options]);
 
-  // Handle change
-  const handleChange = (e: React.ChangeEvent<HTMLSelectElement>): void => {
-    const value = e.target.value;
-    setLocalVal(value);
+  const textFromKeys = React.useCallback(
+    (arr: string[]): string => arr.map(k => keyToText.get(k) ?? k).join(';'),
+    [keyToText]
+  );
 
-    if (value === '') {
-      if (isRequired) {
-        setError(REQUIRED_MSG);
-        GlobalErrorHandle(id, REQUIRED_MSG);
-      } else {
-        setError('');
-        // eslint-disable-next-line @rushstack/no-new-null
-        GlobalErrorHandle(id, null);
-      }
-    } else {
-      setError('');
-      GlobalFormData(id, value);
-      // eslint-disable-next-line @rushstack/no-new-null
-      GlobalErrorHandle(id, null);
-    }
-  };
-
-  // Initial value load
+  // -------------------- useEffect #1: Initial prefill + rules (once) --------------------
   React.useEffect((): void => {
-    if (FormMode === 4 || FormMode === 6) {
-      const fldInternalName = id;
-      if (FormData !== undefined) {
-        const fieldValue = FormData[fldInternalName];
-        if (fieldValue !== null && fieldValue !== undefined) {
-          setLocalVal(fieldValue);
-        }
-      }
-    } else if (FormMode === 8 && starterValue !== undefined) {
-      setLocalVal(starterValue as string);
-      GlobalFormData(id, starterValue);
+    // Prefill from starterValue (New) or FormData (Edit/View)
+    let initKeys: string[] = [];
+    if (FormMode === 8) {
+      initKeys =
+        starterValue == null
+          ? []
+          : Array.isArray(starterValue)
+          ? (starterValue as (string | number)[]).map(toKey)
+          : [toKey(starterValue)];
+    } else {
+      const raw = (FormData as Record<string, unknown> | undefined)
+        ? (isLookup ? (FormData as any)[`${id}Id`] : (FormData as any)[id])
+        : undefined;
+      initKeys = normalizeToStringArray(raw);
     }
-  }, [FormMode, FormData, id, starterValue, GlobalFormData]);
+    initKeys = clampToExisting(initKeys, options);
+    setSelectedKeys(initKeys);
+    setLocalVal(textFromKeys(initKeys));
 
-  // Disable/hide logic
-  React.useEffect((): void => {
+    // Disable/Hide rules
     if (FormMode === 4) {
       setIsDisabled(true);
     } else {
@@ -127,28 +131,67 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
         curField: displayName,
         formStateData: FormData,
         listColumns: listCols,
-      };
+      } as unknown as FormFieldsProps;
 
-      const results = formFieldsSetup(formFieldProps);
-      if (results.length > 0) {
-        for (let i = 0; i < results.length; i++) {
-          if (results[i].isDisabled !== undefined) {
-            setIsDisabled(results[i].isDisabled);
-          }
-          if (results[i].isHidden !== undefined) {
-            setIsHidden(results[i].isHidden);
-          }
-        }
+      const results = formFieldsSetup(formFieldProps) || [];
+      for (const r of results) {
+        if (r.isDisabled !== undefined) setIsDisabled(!!r.isDisabled);
+        if (r.isHidden !== undefined) setIsHidden(!!r.isHidden);
       }
     }
-  }, [FormMode, AllDisableFields, AllHiddenFields, userBasedPerms, curUserInfo, displayName, FormData, listCols]);
 
-  // Submit disable
+    // Clear error on init
+    setError('');
+    // eslint-disable-next-line @rushstack/no-new-null -- SharePoint API expects null for "no error"
+    GlobalErrorHandle(isLookup ? `${id}Id` : id, null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // once
+
+  // -------------------- useEffect #2: submitting → disable & keep visible text --------------------
   React.useEffect((): void => {
-    if (submitting === true) {
+    if (submitting) {
       setIsDisabled(true);
+      setLocalVal(textFromKeys(selectedKeys)); // keep text visible after disabling
     }
-  }, [submitting]);
+  }, [submitting, selectedKeys, textFromKeys]);
+
+  // -------------------- Handlers --------------------
+  const onOptionSelect = (_e: OnOptionSelectEvent, data: OnOptionSelectData): void => {
+    const next = (data.selectedOptions ?? []).map(v => String(v));
+    setSelectedKeys(next);
+    setLocalVal(textFromKeys(next));
+  };
+
+  const handleBlur = (): void => {
+    const targetId = isLookup ? `${id}Id` : id;
+
+    // Validate
+    if (isRequired && selectedKeys.length === 0) {
+      setError(REQUIRED_MSG);
+      GlobalErrorHandle(targetId, REQUIRED_MSG);
+      // eslint-disable-next-line @rushstack/no-new-null -- SharePoint API expects null for empty
+      GlobalFormData(targetId, null);
+      return;
+    }
+
+    setError('');
+    // eslint-disable-next-line @rushstack/no-new-null -- SharePoint API expects null for "no error"
+    GlobalErrorHandle(targetId, null);
+
+    // Commit value: null when empty; numbers for lookup
+    if (isLookup) {
+      const nums = selectedKeys.map(k => Number(k)).filter((n): n is number => Number.isFinite(n));
+      // eslint-disable-next-line @rushstack/no-new-null -- SharePoint API expects null for empty
+      GlobalFormData(targetId, nums.length === 0 ? null : (isMulti ? nums : nums[0]));
+    } else {
+      // eslint-disable-next-line @rushstack/no-new-null -- SharePoint API expects null for empty
+      GlobalFormData(targetId, selectedKeys.length === 0 ? null : (isMulti ? selectedKeys : selectedKeys[0]));
+    }
+  };
+
+  // -------------------- Render --------------------
+  const effectiveClass = className ?? 'fieldClass';
+  const effectivePlaceholder = localVal || placeholder || '';
 
   return (
     <div style={{ display: isHidden ? 'none' : 'block' }}>
@@ -160,27 +203,31 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
       >
         <Dropdown
           id={id}
-          className={className}
-          placeholder={placeholder}
-          value={localVal}
-          disabled={isDisabled}
+          className={effectiveClass}
+          multiselect={isMulti}
           inlinePopup={true}
+          disabled={isDisabled}
+          value={localVal}
+          placeholder={effectivePlaceholder}
+          selectedOptions={selectedKeys}
+          onOptionSelect={onOptionSelect}
           onBlur={handleBlur}
-          onChange={handleChange}
+          title={localVal}
+          aria-label={localVal || displayName}
         >
-          {options.map((o) => (
+          {options.map(o => (
             <Option key={toKey(o.key)} value={toKey(o.key)}>
               {o.text}
             </Option>
           ))}
         </Dropdown>
-        {description && (
-          <div className="descriptionText">{description}</div>
-        )}
+
+        {description ? <div className="descriptionText">{description}</div> : null}
       </Field>
     </div>
   );
 }
+
 
 
 
