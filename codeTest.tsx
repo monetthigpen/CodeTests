@@ -3,6 +3,7 @@ import { Field, Dropdown, Option } from '@fluentui/react-components';
 import { DynamicFormContext } from './DynamicFormContext';
 import formFieldsSetup, { FormFieldsProps } from './formFieldBased';
 
+// Version-safe handler types from Dropdown
 type OnOptionSelect = NonNullable<React.ComponentProps<typeof Dropdown>['onOptionSelect']>;
 type OnOptionSelectEvent = Parameters<OnOptionSelect>[0];
 type OnOptionSelectData = Parameters<OnOptionSelect>[1];
@@ -16,15 +17,14 @@ export interface DropdownProps {
   placeholder?: string;
   className?: string;
   description?: string;
-  fieldType?: string;      // 'lookup' => commit under `${id}LookupId`
-  multiselect?: boolean;   // v9
+  fieldType?: string;      // 'lookup' uses `${id}Id` or `${id}LookupId` (auto-resolved)
+  multiselect?: boolean;   // v9 prop
   multiSelect?: boolean;   // v8 alias
-  disabled?: boolean;
-  submitting?: boolean;
+  disabled?: boolean;      // initial state; rules/submitting can override
+  submitting?: boolean;    // when true => disable
 }
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
-const LOOKUP_SUFFIX = 'LookupId';
 
 const toKey = (k: unknown): string => (k == null ? '' : String(k));
 
@@ -40,40 +40,33 @@ const normalizeToStringArray = (input: unknown): string[] => {
   return [toKey(input)];
 };
 
-const clampToExisting = (
-  values: string[],
-  opts: Array<{ key: string | number }>
-): string[] => {
+const clampToExisting = (values: string[], opts: Array<{ key: string | number }>): string[] => {
   const allowed = new Set(opts.map(o => toKey(o.key)));
   return values.filter(v => allowed.has(v));
 };
 
-// Build the exact payload the backend expects
-const buildCommitValue = (
-  isLookup: boolean,
-  isMulti: boolean,
-  keys: string[]
-): unknown => {
-  if (keys.length === 0) {
-    // eslint-disable-next-line @rushstack/no-new-null
-    return null;
-  }
+// Detect actual lookup backing key on the list: prefer `${id}LookupId`, else `${id}Id`
+const resolveLookupKey = (id: string, listCols: unknown): string => {
+  const bag = (listCols ?? {}) as Record<string, unknown>;
+  const lookupId = `${id}LookupId`;
+  const idOnly = `${id}Id`;
+
+  if (Object.prototype.hasOwnProperty.call(bag, lookupId)) return lookupId;
+  if (Object.prototype.hasOwnProperty.call(bag, idOnly)) return idOnly;
+  return idOnly; // safe default for most SharePoint lists
+};
+
+// Build the payload for GlobalFormData
+const buildCommitValue = (isLookup: boolean, isMulti: boolean, keys: string[]): unknown => {
+  if (keys.length === 0) return null;
 
   if (!isLookup) {
     return isMulti ? keys : keys[0];
   }
 
-  // lookup → numbers
-  const nums = keys
-    .map(k => Number(k))
-    .filter((n): n is number => Number.isFinite(n));
+  const nums = keys.map(k => Number(k)).filter((n): n is number => Number.isFinite(n));
+  if (nums.length === 0) return null;
 
-  if (nums.length === 0) {
-    // eslint-disable-next-line @rushstack/no-new-null
-    return null;
-  }
-
-  // SharePoint expects { results: [...] } for multi lookups
   return isMulti ? { results: nums } : nums[0];
 };
 
@@ -96,9 +89,8 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
 
   const isLookup = fieldType === 'lookup';
   const isMulti = !!(multiselect ?? multiSelect);
-  const targetId = isLookup ? `${id}${LOOKUP_SUFFIX}` : id;
 
-  const [localVal, setLocalVal] = React.useState<string>('');      // semicolon-joined labels
+  const [localVal, setLocalVal] = React.useState<string>('');   // semicolon-joined labels for display
   const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);
   const [error, setError] = React.useState<string>('');
   const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabled);
@@ -116,6 +108,12 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     listCols,
   } = React.useContext(DynamicFormContext);
 
+  // Resolve the actual backend key used for lookup fields on this list
+  const targetId = React.useMemo(() => {
+    return isLookup ? resolveLookupKey(id, listCols) : id;
+  }, [isLookup, id, listCols]);
+
+  // key -> label map
   const keyToText = React.useMemo(() => {
     const m = new Map<string, string>();
     for (const o of options) m.set(toKey(o.key), o.text);
@@ -127,8 +125,8 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     [keyToText]
   );
 
-  // -------- useEffect #1: init + prefill + rules --------
-  React.useEffect((): void => {
+  // useEffect #1: initial prefill and rules
+  React.useEffect(() => {
     let initKeys: string[] = [];
     if (FormMode === 8) {
       initKeys =
@@ -139,8 +137,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
           : [toKey(starterValue)];
     } else {
       const formBag = (FormData ?? {}) as Record<string, unknown>;
-      const key = isLookup ? `${id}${LOOKUP_SUFFIX}` : id;
-      const raw = formBag[key];
+      const raw = formBag[targetId];
       initKeys = normalizeToStringArray(raw);
     }
     initKeys = clampToExisting(initKeys, options);
@@ -168,43 +165,42 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     }
 
     setError('');
-    // eslint-disable-next-line @rushstack/no-new-null
     GlobalErrorHandle(targetId, null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // once
+  }, []); // run once
 
-  // -------- useEffect #2: submitting → disable & keep visible text --------
-  React.useEffect((): void => {
+  // useEffect #2: submitting => disable and keep visible text
+  React.useEffect(() => {
     if (submitting) {
       setIsDisabled(true);
       setLocalVal(textFromKeys(selectedKeys));
     }
   }, [submitting, selectedKeys, textFromKeys]);
 
-  // -------- handlers --------
+  // Commit helper
   const commitNow = (keys: string[]): void => {
     const payload = buildCommitValue(isLookup, isMulti, keys);
     const hasError = isRequired && keys.length === 0;
     const errMsg = hasError ? REQUIRED_MSG : '';
 
     setError(errMsg);
-    GlobalErrorHandle(targetId, hasError ? REQUIRED_MSG : null); // null when no error
+    GlobalErrorHandle(targetId, hasError ? REQUIRED_MSG : null);
     GlobalFormData(targetId, payload);
   };
 
+  // Selection & blur handlers
   const onOptionSelect = (_e: OnOptionSelectEvent, data: OnOptionSelectData): void => {
     const next = (data.selectedOptions ?? []).map(v => String(v));
     setSelectedKeys(next);
     setLocalVal(textFromKeys(next));
-    // Commit immediately so Submit doesn’t miss the value
-    commitNow(next);
+    commitNow(next); // commit immediately so submit cannot miss the value
   };
 
   const handleBlur = (): void => {
     commitNow(selectedKeys);
   };
 
-  // -------- render --------
+  // Render
   const effectiveClass = className ?? 'fieldClass';
   const effectivePlaceholder = localVal || placeholder || '';
 
@@ -242,8 +238,6 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     </div>
   );
 }
-
-
 
 
 
