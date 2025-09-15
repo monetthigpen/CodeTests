@@ -3,7 +3,7 @@ import { Field, Dropdown, Option } from '@fluentui/react-components';
 import { DynamicFormContext } from './DynamicFormContext';
 import formFieldsSetup, { FormFieldsProps } from './formFieldBased';
 
-// Derive handler types directly from the Dropdown component (version-safe)
+// Types derived from Dropdown (version-safe)
 type OnOptionSelect = NonNullable<React.ComponentProps<typeof Dropdown>['onOptionSelect']>;
 type OnOptionSelectEvent = Parameters<OnOptionSelect>[0];
 type OnOptionSelectData = Parameters<OnOptionSelect>[1];
@@ -15,13 +15,13 @@ export interface DropdownProps {
   starterValue?: string | number | Array<string | number>;
   isRequired?: boolean;
   placeholder?: string;
-  className?: string;              // falls back to "fieldClass"
+  className?: string;
   description?: string;
-  fieldType?: string;              // 'lookup' => commit under `${id}LookupId` as numbers
-  multiselect?: boolean;           // v9 prop
-  multiSelect?: boolean;           // alias (older usage)
-  disabled?: boolean;              // initial disabled only; rules/submitting can override
-  submitting?: boolean;            // when true => disable
+  fieldType?: string;      // 'lookup' => commit under `${id}LookupId` as numbers
+  multiselect?: boolean;   // v9
+  multiSelect?: boolean;   // v8 alias
+  disabled?: boolean;
+  submitting?: boolean;
 }
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
@@ -70,7 +70,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
   const isMulti = !!(multiselect ?? multiSelect);
   const targetId = isLookup ? `${id}${LOOKUP_SUFFIX}` : id;
 
-  // Visual/selection state (mirrors your other components)
+  // Visual/selection state
   const [localVal, setLocalVal] = React.useState<string>('');      // semicolon-joined labels
   const [selectedKeys, setSelectedKeys] = React.useState<string[]>([]);
   const [error, setError] = React.useState<string>('');
@@ -113,9 +113,9 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
           ? (starterValue as (string | number)[]).map(toKey)
           : [toKey(starterValue)];
     } else {
-      const raw = (FormData as Record<string, unknown> | undefined)
-        ? (FormData as Record<string, unknown>)[isLookup ? `${id}${LOOKUP_SUFFIX}` : id]
-        : undefined;
+      const formBag = (FormData ?? {}) as Record<string, unknown>; // ✅ safe narrowing
+      const key = isLookup ? `${id}${LOOKUP_SUFFIX}` : id;
+      const raw = formBag[key];
       initKeys = normalizeToStringArray(raw);
     }
     initKeys = clampToExisting(initKeys, options);
@@ -136,7 +136,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
         listColumns: listCols,
       } as unknown as FormFieldsProps;
 
-    const results = formFieldsSetup(formFieldProps) || [];
+      const results = formFieldsSetup(formFieldProps) || [];
       for (const r of results) {
         if (r.isDisabled !== undefined) setIsDisabled(!!r.isDisabled);
         if (r.isHidden !== undefined) setIsHidden(!!r.isHidden);
@@ -145,7 +145,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
 
     // Clear error on init
     setError('');
-    // eslint-disable-next-line @rushstack/no-new-null -- SharePoint API expects null for "no error"
+    // eslint-disable-next-line @rushstack/no-new-null
     GlobalErrorHandle(targetId, null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // once
@@ -170,22 +170,22 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     if (isRequired && selectedKeys.length === 0) {
       setError(REQUIRED_MSG);
       GlobalErrorHandle(targetId, REQUIRED_MSG);
-      // eslint-disable-next-line @rushstack/no-new-null -- SharePoint API expects null for empty
+      // eslint-disable-next-line @rushstack/no-new-null
       GlobalFormData(targetId, null);
       return;
     }
 
     setError('');
-    // eslint-disable-next-line @rushstack/no-new-null -- SharePoint API expects null for "no error"
+    // eslint-disable-next-line @rushstack/no-new-null
     GlobalErrorHandle(targetId, null);
 
     // Commit value: null when empty; numbers for lookup
     if (isLookup) {
       const nums = selectedKeys.map(k => Number(k)).filter((n): n is number => Number.isFinite(n));
-      // eslint-disable-next-line @rushstack/no-new-null -- SharePoint API expects null for empty
+      // eslint-disable-next-line @rushstack/no-new-null
       GlobalFormData(targetId, nums.length === 0 ? null : (isMulti ? nums : nums[0]));
     } else {
-      // eslint-disable-next-line @rushstack/no-new-null -- SharePoint API expects null for empty
+      // eslint-disable-next-line @rushstack/no-new-null
       GlobalFormData(targetId, selectedKeys.length === 0 ? null : (isMulti ? selectedKeys : selectedKeys[0]));
     }
   };
