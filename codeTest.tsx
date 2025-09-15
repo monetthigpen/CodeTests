@@ -17,7 +17,7 @@ export interface DropdownProps {
   placeholder?: string;
   className?: string;              // falls back to "fieldClass"
   description?: string;
-  fieldType?: string;              // 'lookup' => commit under `${id}Id` as numbers
+  fieldType?: string;              // 'lookup' => commit under `${id}LookupId` as numbers
   multiselect?: boolean;           // v9 prop
   multiSelect?: boolean;           // alias (older usage)
   disabled?: boolean;              // initial disabled only; rules/submitting can override
@@ -25,6 +25,8 @@ export interface DropdownProps {
 }
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
+const LOOKUP_SUFFIX = 'LookupId';
+
 const toKey = (k: unknown): string => (k == null ? '' : String(k));
 
 const normalizeToStringArray = (input: unknown): string[] => {
@@ -66,6 +68,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
 
   const isLookup = fieldType === 'lookup';
   const isMulti = !!(multiselect ?? multiSelect);
+  const targetId = isLookup ? `${id}${LOOKUP_SUFFIX}` : id;
 
   // Visual/selection state (mirrors your other components)
   const [localVal, setLocalVal] = React.useState<string>('');      // semicolon-joined labels
@@ -111,7 +114,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
           : [toKey(starterValue)];
     } else {
       const raw = (FormData as Record<string, unknown> | undefined)
-        ? (isLookup ? (FormData as any)[`${id}Id`] : (FormData as any)[id])
+        ? (FormData as Record<string, unknown>)[isLookup ? `${id}${LOOKUP_SUFFIX}` : id]
         : undefined;
       initKeys = normalizeToStringArray(raw);
     }
@@ -133,7 +136,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
         listColumns: listCols,
       } as unknown as FormFieldsProps;
 
-      const results = formFieldsSetup(formFieldProps) || [];
+    const results = formFieldsSetup(formFieldProps) || [];
       for (const r of results) {
         if (r.isDisabled !== undefined) setIsDisabled(!!r.isDisabled);
         if (r.isHidden !== undefined) setIsHidden(!!r.isHidden);
@@ -143,7 +146,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     // Clear error on init
     setError('');
     // eslint-disable-next-line @rushstack/no-new-null -- SharePoint API expects null for "no error"
-    GlobalErrorHandle(isLookup ? `${id}Id` : id, null);
+    GlobalErrorHandle(targetId, null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // once
 
@@ -163,8 +166,6 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
   };
 
   const handleBlur = (): void => {
-    const targetId = isLookup ? `${id}Id` : id;
-
     // Validate
     if (isRequired && selectedKeys.length === 0) {
       setError(REQUIRED_MSG);
