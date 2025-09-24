@@ -151,3 +151,20 @@ export default function TagPeoplePickerSimple(props: TagPeoplePickerSimpleProps)
     </Field>
   );
 }
+
+case "user": {
+  allFormElements.push(
+    <TagPeoplePickerSimple
+      id={listColumns[i].name}
+      displayName={listColumns[i].displayName}
+      starterValue={starterVal}                  // initial value if provided
+      isRequired={listColumns[i].required}
+      submitting={isSubmitting}                  // disables when submitting
+      single={!listColumns[i].multi}             // true if field is single-user
+      placeholder={listColumns[i].description}   // optional
+      description={listColumns[i].description}
+      className="elementsWidth"
+    />
+  );
+  break;
+}
