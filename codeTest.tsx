@@ -19,44 +19,59 @@ export interface DropdownProps {
   submitting?: boolean;
 }
 
+type OnSelect = NonNullable<React.ComponentProps<typeof Dropdown>['onOptionSelect']>;
+type OnSelectEvent = Parameters<OnSelect>[0];
+type OnSelectData = Parameters<OnSelect>[1];
+
+interface RuleResult {
+  isDisabled?: boolean;
+  isHidden?: boolean;
+}
+
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
 const toKey = (k: unknown): string => (k == null ? '' : String(k));
 
 const normalizeValues = (input: unknown): string[] => {
   if (!input) return [];
   if (Array.isArray(input)) return input.map(toKey);
-  if (typeof input === 'object' && (input as any).results) return (input as any).results.map(toKey);
-  if (typeof input === 'string' && input.includes(';')) return input.split(';').map(s => s.trim());
+  if (typeof input === 'object' && input !== null && (input as { results?: unknown[] }).results) {
+    return ((input as { results: unknown[] }).results!).map(toKey);
+  }
+  if (typeof input === 'string' && input.includes(';')) {
+    return input.split(';').map(s => s.trim()).filter(Boolean);
+  }
   return [toKey(input)];
 };
 
-const resolveLookupKey = (id: string, listCols: any): string => {
-  if (listCols?.[`${id}LookupId`] !== undefined) return `${id}LookupId`;
-  return `${id}Id`;
+const resolveLookupKey = (id: string, listCols: unknown): string => {
+  const cols = (listCols ?? {}) as Record<string, unknown>;
+  return Object.prototype.hasOwnProperty.call(cols, `${id}LookupId`) ? `${id}LookupId` : `${id}Id`;
 };
 
-const buildValue = (isLookup: boolean, isMulti: boolean, keys: string[]): any => {
+const buildValue = (isLookup: boolean, isMulti: boolean, keys: string[]): unknown => {
   if (!keys.length) return null;
   if (!isLookup) return isMulti ? keys : keys[0];
-  const nums = keys.map(Number).filter(n => !isNaN(n));
-  return isMulti ? { results: nums } : nums[0];
+  const nums = keys.map(Number).filter(n => Number.isFinite(n));
+  return nums.length ? (isMulti ? { results: nums } : nums[0]) : null;
 };
 
-export default function DropdownComponent({
-  id,
-  displayName,
-  options,
-  starterValue,
-  isRequired = false,
-  placeholder,
-  className,
-  description,
-  fieldType,
-  multiselect,
-  multiSelect,
-  disabled = false,
-  submitting = false,
-}: DropdownProps): JSX.Element {
+export default function DropdownComponent(props: DropdownProps): JSX.Element {
+  const {
+    id,
+    displayName,
+    options,
+    starterValue,
+    isRequired = false,
+    placeholder,
+    className,
+    description,
+    fieldType,
+    multiselect,
+    multiSelect,
+    disabled = false,
+    submitting = false,
+  } = props;
+
   const isLookup = fieldType === 'lookup';
   const isMulti = !!(multiselect ?? multiSelect);
 
@@ -84,21 +99,24 @@ export default function DropdownComponent({
   );
 
   const keyToText = React.useMemo(() => {
-    const m = new Map(options.map(o => [toKey(o.key), o.text]));
-    return (arr: string[]) => arr.map(k => m.get(k) ?? k).join(';');
+    const map = new Map<string, string>(options.map(o => [toKey(o.key), o.text]));
+    return (arr: string[]) => arr.map(k => map.get(k) ?? k).join(';');
   }, [options]);
 
   // Prefill + rules
   React.useEffect(() => {
-    let init = FormMode === 8 ? normalizeValues(starterValue) : normalizeValues((FormData ?? {})[targetId]);
-    init = init.filter(v => options.some(o => toKey(o.key) === v));
+    const bag = (FormData ?? {}) as Record<string, unknown>;
+    let init = FormMode === 8 ? normalizeValues(starterValue) : normalizeValues(bag[targetId]);
+    const allowed = new Set(options.map(o => toKey(o.key)));
+    init = init.filter(v => allowed.has(v));
 
     setSelectedKeys(init);
     setLocalVal(keyToText(init));
 
-    if (FormMode === 4) setIsDisabled(true);
-    else {
-      const rules: FormFieldsProps = {
+    if (FormMode === 4) {
+      setIsDisabled(true);
+    } else {
+      const ruleArgs: FormFieldsProps = {
         disabledList: AllDisableFields,
         hiddenList: AllHiddenFields,
         userBasedList: userBasedPerms,
@@ -106,11 +124,13 @@ export default function DropdownComponent({
         curField: displayName,
         formStateData: FormData,
         listColumns: listCols,
-      } as any;
-      (formFieldsSetup(rules) || []).forEach(r => {
+      } as unknown as FormFieldsProps;
+
+      const results: RuleResult[] = (formFieldsSetup(ruleArgs) as RuleResult[]) || [];
+      for (const r of results) {
         if (r.isDisabled !== undefined) setIsDisabled(!!r.isDisabled);
         if (r.isHidden !== undefined) setIsHidden(!!r.isHidden);
-      });
+      }
     }
 
     setError('');
@@ -118,7 +138,7 @@ export default function DropdownComponent({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Disable on submit
+  // Disable on submit & keep joined text
   React.useEffect(() => {
     if (submitting) {
       setIsDisabled(true);
@@ -126,7 +146,7 @@ export default function DropdownComponent({
     }
   }, [submitting, selectedKeys, keyToText]);
 
-  const commit = (keys: string[]) => {
+  const commit = (keys: string[]): void => {
     const val = buildValue(isLookup, isMulti, keys);
     const msg = isRequired && !keys.length ? REQUIRED_MSG : '';
     setError(msg);
@@ -134,12 +154,14 @@ export default function DropdownComponent({
     GlobalFormData(targetId, val);
   };
 
-  const onSelect = (_: any, data: any) => {
+  const onSelect = (_e: OnSelectEvent, data: OnSelectData): void => {
     const next = (data.selectedOptions ?? []).map(String);
     setSelectedKeys(next);
     setLocalVal(keyToText(next));
     commit(next);
   };
+
+  const rootClass = className ?? 'fieldClass';
 
   return (
     <div style={{ display: isHidden ? 'none' : 'block' }}>
@@ -155,13 +177,14 @@ export default function DropdownComponent({
             disabled
             value={localVal}
             placeholder={localVal || placeholder}
-            className={className ?? 'fieldClass'}
+            className={rootClass}
             title={localVal}
           />
         )}
+
         <Dropdown
           id={id}
-          className={className ?? 'fieldClass'}
+          className={rootClass}
           multiselect={isMulti}
           inlinePopup
           disabled={isDisabled}
@@ -171,6 +194,7 @@ export default function DropdownComponent({
           onOptionSelect={onSelect}
           onBlur={() => commit(selectedKeys)}
           title={localVal}
+          aria-label={localVal || displayName}
         >
           {options.map(o => (
             <Option key={String(o.key)} value={String(o.key)}>
@@ -178,7 +202,8 @@ export default function DropdownComponent({
             </Option>
           ))}
         </Dropdown>
-        {description && <div className="descriptionText">{description}</div>}
+
+        {description ? <div className="descriptionText">{description}</div> : null}
       </Field>
     </div>
   );
