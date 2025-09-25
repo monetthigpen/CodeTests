@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Field, Dropdown, Option, Input } from '@fluentui/react-components';
+import { Field, Dropdown, Option } from '@fluentui/react-components';
 import { DynamicFormContext } from './DynamicFormContext';
 import formFieldsSetup, { FormFieldsProps } from './formFieldBased';
 
@@ -23,10 +23,7 @@ type OnSelect = NonNullable<React.ComponentProps<typeof Dropdown>['onOptionSelec
 type OnSelectEvent = Parameters<OnSelect>[0];
 type OnSelectData = Parameters<OnSelect>[1];
 
-interface RuleResult {
-  isDisabled?: boolean;
-  isHidden?: boolean;
-}
+interface RuleResult { isDisabled?: boolean; isHidden?: boolean; }
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
 const toKey = (k: unknown): string => (k == null ? '' : String(k));
@@ -55,23 +52,21 @@ const buildValue = (isLookup: boolean, isMulti: boolean, keys: string[]): unknow
   return nums.length ? (isMulti ? { results: nums } : nums[0]) : null;
 };
 
-export default function DropdownComponent(props: DropdownProps): JSX.Element {
-  const {
-    id,
-    displayName,
-    options,
-    starterValue,
-    isRequired = false,
-    placeholder,
-    className,
-    description,
-    fieldType,
-    multiselect,
-    multiSelect,
-    disabled = false,
-    submitting = false,
-  } = props;
-
+export default function DropdownComponent({
+  id,
+  displayName,
+  options,
+  starterValue,
+  isRequired = false,
+  placeholder,
+  className,
+  description,
+  fieldType,
+  multiselect,
+  multiSelect,
+  disabled = false,
+  submitting = false,
+}: DropdownProps): JSX.Element {
   const isLookup = fieldType === 'lookup';
   const isMulti = !!(multiselect ?? multiSelect);
 
@@ -103,7 +98,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     return (arr: string[]) => arr.map(k => map.get(k) ?? k).join(';');
   }, [options]);
 
-  // Prefill + rules
+  // Prefill + rules (runs once)
   React.useEffect(() => {
     const bag = (FormData ?? {}) as Record<string, unknown>;
     let init = FormMode === 8 ? normalizeValues(starterValue) : normalizeValues(bag[targetId]);
@@ -116,7 +111,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     if (FormMode === 4) {
       setIsDisabled(true);
     } else {
-      const ruleArgs: FormFieldsProps = {
+      const args: FormFieldsProps = {
         disabledList: AllDisableFields,
         hiddenList: AllHiddenFields,
         userBasedList: userBasedPerms,
@@ -126,7 +121,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
         listColumns: listCols,
       } as unknown as FormFieldsProps;
 
-      const results: RuleResult[] = (formFieldsSetup(ruleArgs) as RuleResult[]) || [];
+      const results: RuleResult[] = (formFieldsSetup(args) as RuleResult[]) || [];
       for (const r of results) {
         if (r.isDisabled !== undefined) setIsDisabled(!!r.isDisabled);
         if (r.isHidden !== undefined) setIsHidden(!!r.isHidden);
@@ -138,7 +133,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Disable on submit & keep joined text
+  // Disable on submit, keep visible text
   React.useEffect(() => {
     if (submitting) {
       setIsDisabled(true);
@@ -171,17 +166,6 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
         validationMessage={error || undefined}
         validationState={error ? 'error' : undefined}
       >
-        {isDisabled && (
-          <Input
-            id={id}
-            disabled
-            value={localVal}
-            placeholder={localVal || placeholder}
-            className={rootClass}
-            title={localVal}
-          />
-        )}
-
         <Dropdown
           id={id}
           className={rootClass}
