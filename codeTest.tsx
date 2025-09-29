@@ -25,17 +25,29 @@ const toKey = (k: unknown): string => (k == null ? '' : String(k));
 
 function normalizeToStringArray(input: unknown): string[] {
   if (!input) return [];
+
   if ((Array.isArray((input as any)?.results))) {
     return ((input as any).results as unknown[]).map(toKey);
   }
-  if (Array.isArray(input)) return (input as unknown[]).map(toKey);
-  if (typeof input === 'string' && input.includes(';')) {
-    return input.split(';').map(s => toKey(s.trim())).filter(Boolean);
+
+  if (Array.isArray(input)) {
+    return (input as unknown[]).map(toKey);
   }
+
+  if (typeof input === 'string' && input.includes(';')) {
+    return input
+      .split(';')
+      .map(s => toKey(s.trim()))
+      .filter(Boolean);
+  }
+
   return [toKey(input)];
 }
 
-function clampToExisting(values: string[], opts: { key: string | number }[]): string[] {
+function clampToExisting(
+  values: string[],
+  opts: { key: string | number }[]
+): string[] {
   const allowed = new Set(opts.map(o => toKey(o.key)));
   return values.filter(v => allowed.has(v));
 }
@@ -206,7 +218,10 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     setDisplayOverride(labels.join('; '));
   }, [validate, reportError, GlobalFormData, id, isLookup, multiSelect, selectedOptions, keyToText]);
 
-  const handleOptionSelect = (e: unknown, data: { optionValue: string | number; selectedOptions: (string | number)[] }) => {
+  const handleOptionSelect = (
+    e: unknown,
+    data: { optionValue: string | number; selectedOptions: (string | number)[] }
+  ) => {
     const next = (data.selectedOptions ?? []).map(toKey);
     setSelectedOptions(next);
     if (!touched) reportError(isRequired && next.length === 0 ? REQUIRED_MSG : '');
@@ -275,9 +290,3 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     </div>
   );
 }
-
-
-
-
-
-
