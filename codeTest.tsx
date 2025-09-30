@@ -1,7 +1,14 @@
 import * as React from 'react';
-import { Field, Dropdown, Option, Input } from '@fluentui/react-components';
+import {
+  Field,
+  Dropdown,
+  Option,
+  Input,
+  type OptionOnSelectData,
+  type SelectionEvents,
+} from '@fluentui/react-components';
 import { DynamicFormContext } from './DynamicFormContext';
-import { formFieldsSetup, FormFieldsProps } from './formFieldBased';
+import formFieldsSetup, { FormFieldsProps } from './formFieldBased';
 
 /** Option type */
 type Opt = { key: string | number; text: string };
@@ -211,10 +218,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
           : (FormData as any)?.[id];
     }
 
-    const normalized = isMulti
-      ? clampToExisting(normalizeToStringArray(raw), options)
-      : clampToExisting(normalizeToStringArray(raw), options);
-
+    const normalized = clampToExisting(normalizeToStringArray(raw), options);
     setSelectedOptions(normalized);
   }, [FormData, FormMode, id, isLookup, isMulti, options, starterValue]);
 
@@ -321,15 +325,15 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     validate,
   ]);
 
-  // Handle UI events
-  const handleOptionSelect = (
-    _e: unknown,
-    data: { optionValue: string | number; selectedOptions: (string | number)[] }
-  ) => {
-    const next = (data.selectedOptions ?? []).map(toKey);
-    setSelectedOptions(next);
-    if (!touched) reportError(isRequired && next.length === 0 ? REQUIRED_MSG : '');
-  };
+  // Handle UI events (exact Fluent v9 types; selectedOptions/optionValue are optional)
+  const handleOptionSelect = React.useCallback(
+    (_e: SelectionEvents, data: OptionOnSelectData) => {
+      const next = (data.selectedOptions ?? []).map(toKey);
+      setSelectedOptions(next);
+      if (!touched) reportError(isRequired && next.length === 0 ? REQUIRED_MSG : '');
+    },
+    [isRequired, reportError, touched]
+  );
 
   const handleBlur = () => {
     setTouched(true);
