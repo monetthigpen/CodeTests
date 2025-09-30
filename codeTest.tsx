@@ -10,58 +10,60 @@ import {
 import { DynamicFormContext } from './DynamicFormContext';
 import formFieldsSetup, { FormFieldsProps } from './formFieldBased';
 
-/** Option type */
+/** Option type for this component */
 type Opt = { key: string | number; text: string };
 
 /** Props */
 interface DropdownProps {
-  id: string;                                // base internal name (no Id suffix)
+  /** Base SharePoint internal name (no suffix). If you pass ...Id/LookupId, we'll strip it. */
+  id: string;
   displayName: string;
   options: Opt[];
+
   starterValue?: string | number | Array<string | number>;
   isRequired?: boolean;
   placeholder?: string;
-  /** v8 prop name */
+
+  /** v8 prop name for multi */
   multiSelect?: boolean;
-  /** v9 prop name */
+  /** v9 prop name for multi */
   multiselect?: boolean;
-  /** set to "lookup" if this is a lookup field */
-  fieldType?: string; // 'lookup'
+
+  /** Set to "lookup" for lookup fields (auto-detected if id ends with Id/LookupId) */
+  fieldType?: string;
+
   className?: string;
   description?: string;
   disabled?: boolean;
   submitting?: boolean;
 
   /**
-   * Which API are you committing to?
-   *  - 'graph' => <InternalName>LookupId with number | number[]
-   *  - 'rest'  => <InternalName>Id with number | {results:number[]}
-   *
-   * Defaults to 'graph'.
+   * API flavor to shape payload:
+   *  - 'graph' (default): <InternalName>LookupId with number | number[]
+   *  - 'rest'          : <InternalName>Id with number | {results:number[]}
    */
   apiFlavor?: 'graph' | 'rest';
 }
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
-
 const toKey = (k: unknown): string => (k == null ? '' : String(k));
 
-/** Remove any trailing Id/LookupId so we can append the right suffix */
+/** Remove any trailing Id/LookupId so we can append the right suffix cleanly */
 function baseName(name: string): string {
   return name.replace(/(Lookup)?Id$/i, '');
 }
 
-/** Normalizes unknown into string[] (semicolon-delimited strings supported) */
+/** Normalize any unknown value into string[] */
 function normalizeToStringArray(input: unknown): string[] {
   if (input == null) return [];
 
-  // SharePoint classic multi format: { results: any[] }
+  // Classic REST multi: { results: any[] }
   if (typeof input === 'object' && Array.isArray((input as any).results)) {
     return ((input as any).results as unknown[]).map(toKey);
   }
 
   if (Array.isArray(input)) {
-    // Could be an array of primitives or objects
+    // Could be primitives or objects
     if (input.length && typeof input[0] === 'object') {
       return (input as any[]).map(v => {
         const o = v as any;
@@ -72,10 +74,7 @@ function normalizeToStringArray(input: unknown): string[] {
   }
 
   if (typeof input === 'string' && input.includes(';')) {
-    return input
-      .split(';')
-      .map(s => toKey(s.trim()))
-      .filter(Boolean);
+    return input.split(';').map(s => toKey(s.trim())).filter(Boolean);
   }
 
   return [toKey(input)];
@@ -83,23 +82,19 @@ function normalizeToStringArray(input: unknown): string[] {
 
 /** For multi-lookup when reading from FormData in various shapes */
 function extractMultiLookupRaw(v: unknown): string[] {
-  // REST style {results:number[]}
   if (v && typeof v === 'object' && Array.isArray((v as any).results)) {
-    return (v as any).results.map(toKey);
+    return (v as any).results.map(toKey); // REST {results:[]}
   }
-
-  // Graph style number[] OR array of objects
   if (Array.isArray(v)) {
     if (v.length && typeof v[0] === 'object' && v[0] !== null) {
       return (v as any[]).map(x => toKey((x as any).LookupId ?? (x as any).Id ?? x));
     }
-    return (v as (number | string)[]).map(toKey);
+    return (v as (number | string)[]).map(toKey); // Graph number[] or string[]
   }
-
   return normalizeToStringArray(v);
 }
 
-/** Keeps only values present in options */
+/** Keep only keys that exist in options */
 function clampToExisting(values: string[], opts: Opt[]): string[] {
   const allowed = new Set(opts.map(o => toKey(o.key)));
   return values.filter(v => allowed.has(v));
@@ -113,7 +108,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     isRequired: requiredProp = false,
     placeholder,
     multiSelect = false,
-    multiselect, // v9 mirror (we’ll still drive behavior from multiSelect)
+    multiselect,
     fieldType,
     options,
     className,
@@ -123,7 +118,11 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     apiFlavor = 'graph',
   } = props;
 
-  const isLookup = fieldType === 'lookup';
+  // Treat as lookup if explicitly set OR id ends with Id/LookupId
+  const isLookup =
+    fieldType === 'lookup' ||
+    /(Lookup)?Id$/i.test(id);
+
   const isMulti = !!multiSelect || !!multiselect;
 
   const {
@@ -149,14 +148,14 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
   const isLockedRef = React.useRef<boolean>(false);
   const didInitRef = React.useRef<boolean>(false);
 
-  // Map for key -> text
+  // key -> text map for fast labels
   const keyToText = React.useMemo(() => {
     const m = new Map<string, string>();
     for (const o of options) m.set(toKey(o.key), o.text);
     return m;
   }, [options]);
 
-  /** The actual commit field name (depends on API and lookup-ness) */
+  /** Real commit field name (depends on API + lookup-ness) */
   const targetFieldName = React.useMemo(() => {
     if (isLookup) {
       const base = baseName(id);
@@ -165,7 +164,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     return id;
   }, [apiFlavor, id, isLookup]);
 
-  /** Report error against the real commit field name */
+  /** Send error to global handler using the actual commit field name */
   const reportError = React.useCallback(
     (msg: string) => {
       setError(msg || '');
@@ -186,7 +185,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
 
     const base = baseName(id);
 
-    // First pass: use starterValue when creating
+    // On first pass, prefer starterValue (e.g., on create form)
     if (!didInitRef.current) {
       if (FormMode !== 3) {
         const initArr = Array.isArray(starterValue)
@@ -198,7 +197,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
       return;
     }
 
-    // Subsequent passes: reflect FormData
+    // Subsequent passes reflect FormData
     let raw: unknown;
 
     if (isLookup) {
@@ -294,23 +293,23 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
         .filter(n => Number.isFinite(n));
 
       if (apiFlavor === 'graph') {
-        // GRAPH: <InternalName>LookupId
+        // Graph: <InternalName>LookupId
         (GlobalFormData as any)[targetFieldName] = isMulti
-          ? nums                                // number[]
-          : (nums[0] ?? null);                  // number | null
+          ? nums                      // number[]
+          : (nums[0] ?? null);        // number | null
       } else {
         // REST: <InternalName>Id
         (GlobalFormData as any)[targetFieldName] = isMulti
-          ? { results: nums }                   // { results: number[] }
-          : (nums[0] ?? null);                  // number | null
+          ? { results: nums }         // { results: number[] }
+          : (nums[0] ?? null);        // number | null
       }
     } else {
       // Non-lookup (choice/text/etc.)
       if (isMulti) {
         (GlobalFormData as any)[targetFieldName] =
           apiFlavor === 'graph'
-            ? selectedOptions                   // string[]
-            : { results: selectedOptions };     // REST shape
+            ? selectedOptions         // string[]
+            : { results: selectedOptions }; // REST: {results:string[]}
       } else {
         (GlobalFormData as any)[targetFieldName] = selectedOptions[0] ?? null;
       }
@@ -330,7 +329,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     validate,
   ]);
 
-  // Handle UI events (Fluent v9 types; properties may be undefined)
+  // Handle UI events (Fluent v9 types; props may be undefined)
   const handleOptionSelect = React.useCallback(
     (_e: SelectionEvents, data: OptionOnSelectData) => {
       const next = (data.selectedOptions ?? []).map(toKey);
