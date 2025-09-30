@@ -3,35 +3,60 @@ import { Field, Dropdown, Option, Input } from '@fluentui/react-components';
 import { DynamicFormContext } from './DynamicFormContext';
 import { formFieldsSetup, FormFieldsProps } from './formFieldBased';
 
+/** Option type */
+type Opt = { key: string | number; text: string };
+
+/** Props */
 interface DropdownProps {
   id: string;
-  starterValue?: string | number | Array<string | number>;
   displayName: string;
+  options: Opt[];
+  starterValue?: string | number | Array<string | number>;
   isRequired?: boolean;
   placeholder?: string;
-  multiSelect?: boolean;    // v8 prop
-  multiselect?: boolean;    // v9 prop
-  fieldType?: string;       // 'lookup' => commit under `${id}Id` as numbers
-  options: { key: string | number; text: string }[];
+  /** v8 prop name */
+  multiSelect?: boolean;
+  /** v9 prop name */
+  multiselect?: boolean;
+  /** set to "lookup" if this is a lookup field */
+  fieldType?: string; // 'lookup'
   className?: string;
   description?: string;
   disabled?: boolean;
   submitting?: boolean;
+
+  /**
+   * Which API are you committing to?
+   *  - 'graph' => <InternalName>LookupId with number | number[]
+   *  - 'rest'  => <InternalName>Id with number | {results:number[]}
+   *
+   * Defaults to 'graph'.
+   */
+  apiFlavor?: 'graph' | 'rest';
 }
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
 
 const toKey = (k: unknown): string => (k == null ? '' : String(k));
 
+/** Normalizes unknown into string[] (semicolon-delimited strings supported) */
 function normalizeToStringArray(input: unknown): string[] {
-  if (!input) return [];
+  if (input == null) return [];
 
-  if ((Array.isArray((input as any)?.results))) {
+  // SharePoint classic multi format: { results: any[] }
+  if (typeof input === 'object' && Array.isArray((input as any).results)) {
     return ((input as any).results as unknown[]).map(toKey);
   }
 
   if (Array.isArray(input)) {
-    return (input as unknown[]).map(toKey);
+    // Could be an array of primitives or objects
+    if (input.length && typeof input[0] === 'object') {
+      return (input as any[]).map(v => {
+        const o = v as any;
+        return toKey(o?.LookupId ?? o?.Id ?? o);
+      });
+    }
+    return (input as (string | number)[]).map(toKey);
   }
 
   if (typeof input === 'string' && input.includes(';')) {
@@ -44,10 +69,26 @@ function normalizeToStringArray(input: unknown): string[] {
   return [toKey(input)];
 }
 
-function clampToExisting(
-  values: string[],
-  opts: { key: string | number }[]
-): string[] {
+/** For multi-lookup when reading from FormData in various shapes */
+function extractMultiLookupRaw(v: unknown): string[] {
+  // REST style {results:number[]}
+  if (v && typeof v === 'object' && Array.isArray((v as any).results)) {
+    return (v as any).results.map(toKey);
+  }
+
+  // Graph style number[]
+  if (Array.isArray(v)) {
+    if (v.length && typeof v[0] === 'object' && v[0] !== null) {
+      return (v as any[]).map(x => toKey((x as any).LookupId ?? (x as any).Id ?? x));
+    }
+    return (v as (number | string)[]).map(toKey);
+  }
+
+  return normalizeToStringArray(v);
+}
+
+/** Keeps only values present in options */
+function clampToExisting(values: string[], opts: Opt[]): string[] {
   const allowed = new Set(opts.map(o => toKey(o.key)));
   return values.filter(v => allowed.has(v));
 }
@@ -60,16 +101,20 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     isRequired: requiredProp = false,
     placeholder,
     multiSelect = false,
+    multiselect, // v9 mirror (we’ll still drive behavior from multiSelect)
     fieldType,
     options,
     className,
     description,
     disabled: disabledProp = false,
     submitting = false,
+    apiFlavor = 'graph',
   } = props;
 
   const isLookup = fieldType === 'lookup';
+  const isMulti = !!multiSelect || !!multiselect;
 
+  // Context
   const {
     FormData,
     GlobalFormData,
@@ -82,94 +127,111 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     listCols,
   } = React.useContext(DynamicFormContext);
 
+  // State
   const [isRequired, setIsRequired] = React.useState<boolean>(!!requiredProp);
   const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabledProp);
   const [isHidden, setIsHidden] = React.useState<boolean>(false);
-
-  // Controlled selection
   const [selectedOptions, setSelectedOptions] = React.useState<string[]>([]);
   const [error, setError] = React.useState<string>('');
   const [touched, setTouched] = React.useState<boolean>(false);
-
-  // Lock/Cache for display text when disabled
   const [displayOverride, setDisplayOverride] = React.useState<string>('');
+
   const isLockedRef = React.useRef<boolean>(false);
   const didInitRef = React.useRef<boolean>(false);
 
+  // Fast map for key->text
   const keyToText = React.useMemo(() => {
     const m = new Map<string, string>();
     for (const o of options) m.set(toKey(o.key), o.text);
     return m;
   }, [options]);
 
+  /** Decide the commit field name once (depends on API flavor and lookup-ness) */
+  const targetFieldName = React.useMemo(() => {
+    if (isLookup) {
+      return apiFlavor === 'graph' ? `${id}LookupId` : `${id}Id`;
+    }
+    return id;
+  }, [apiFlavor, id, isLookup]);
+
+  /** Send error to global handler using the actual commit field name */
   const reportError = React.useCallback(
     (msg: string) => {
-      const targetId = isLookup ? `${id}LookupId` : id;
       setError(msg || '');
-      GlobalErrorHandle(targetId, msg || null);
+      GlobalErrorHandle?.(targetFieldName, msg || null);
     },
-    [GlobalErrorHandle, id, isLookup]
+    [GlobalErrorHandle, targetFieldName]
   );
 
+  // Mirror prop changes
   React.useEffect(() => {
     setIsRequired(!!requiredProp);
     setIsDisabled(!!disabledProp);
   }, [requiredProp, disabledProp]);
 
-  // Submitting disables and locks display text
+  // Initialize / refresh selection from FormData + starterValue
   React.useEffect(() => {
-    if (submitting) {
+    if (isLockedRef.current) return;
+
+    // First pass: prefer explicit starterValue (e.g., when creating)
+    if (!didInitRef.current) {
+      if (FormMode !== 3) {
+        const initArr = Array.isArray(starterValue)
+          ? (starterValue as Array<string | number>).map(toKey)
+          : [toKey(starterValue)];
+        setSelectedOptions(clampToExisting(initArr, options));
+      }
+      didInitRef.current = true;
+      return;
+    }
+
+    // Subsequent passes: reflect FormData
+    let raw: unknown;
+
+    if (isLookup) {
+      if (isMulti) {
+        const mv =
+          (FormData as any)?.[id] ??
+          (FormData as any)?.[`${id}LookupId`] ??
+          (FormData as any)?.[`${id}Id`];
+        raw = extractMultiLookupRaw(mv);
+      } else {
+        const sv =
+          (FormData as any)?.[`${id}LookupId`] ?? // Graph
+          (FormData as any)?.[`${id}Id`] ??       // REST
+          (FormData as any)?.[id];
+        raw = sv;
+      }
+    } else {
+      raw =
+        isMulti
+          ? (FormData as any)?.[id] ??
+            (FormData as any)?.[`${id}Id`] ??
+            (FormData as any)?.[`${id}LookupId`]
+          : (FormData as any)?.[id];
+    }
+
+    const normalized = isMulti
+      ? clampToExisting(normalizeToStringArray(raw), options)
+      : clampToExisting(normalizeToStringArray(raw), options);
+
+    setSelectedOptions(normalized);
+  }, [FormData, FormMode, id, isLookup, isMulti, options, starterValue]);
+
+  // Lock & show display text when submitting or in display mode
+  React.useEffect(() => {
+    if (submitting || FormMode === 4) {
       setIsDisabled(true);
       isLockedRef.current = true;
       const labels = selectedOptions.map(k => keyToText.get(k) ?? k);
       setDisplayOverride(labels.join('; '));
     }
-  }, [submitting, selectedOptions, keyToText]);
+  }, [FormMode, submitting, selectedOptions, keyToText]);
 
-  const ensureInOptions = (vals: string[]) => clampToExisting(vals, options);
+  // Field-level disable/hide rules
+  React.useEffect(() => {
+    if (FormMode === 4) return;
 
-  if (!isLockedRef.current) {
-    if (!didInitRef.current) {
-      if (FormMode !== 3) {
-        const initArr =
-          Array.isArray(starterValue)
-            ? starterValue.map(toKey)
-            : [toKey(starterValue)];
-        setSelectedOptions(ensureInOptions(initArr));
-      }
-      didInitRef.current = true;
-    } else {
-      let raw;
-      if (isLookup) {
-        if (multiSelect) {
-          const mLookup = (FormData as any)[`${id}`];
-          if (mLookup?.length > 0) {
-            raw = mLookup.map((v: any) => v.LookupId);
-          } else {
-            raw = [];
-          }
-        } else {
-          raw = (FormData as any)[`${id}LookupId`];
-        }
-      } else {
-        raw = (FormData as any)[id];
-      }
-      const arr = ensureInOptions(normalizeToStringArray(raw));
-      setSelectedOptions(arr);
-    }
-  } else {
-    const clamped = ensureInOptions(selectedOptions);
-    if (clamped.length !== selectedOptions.length) {
-      setSelectedOptions(clamped);
-    }
-  }
-
-  if (FormMode === 4) {
-    setIsDisabled(true);
-    isLockedRef.current = true;
-    const labels = selectedOptions.map(k => keyToText.get(k) ?? k);
-    setDisplayOverride(labels.join('; '));
-  } else {
     const formFieldProps: FormFieldsProps = {
       disableList: AllDisableFields,
       HiddenList: AllHiddenFields,
@@ -187,39 +249,81 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
         if (results[i].isHidden !== undefined) setIsHidden(results[i].isHidden);
       }
     }
+
     if (!isLockedRef.current && isDisabled) {
       const labels = selectedOptions.map(k => keyToText.get(k) ?? k);
       setDisplayOverride(labels.join('; '));
     }
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    AllDisableFields,
+    AllHiddenFields,
+    FormData,
+    FormMode,
+    curUserInfo,
+    displayName,
+    isDisabled,
+    keyToText,
+    listCols,
+    selectedOptions,
+    userBasedPerms,
+  ]);
 
-  reportError('');
-  setTouched(false);
-
+  // Validation
   const validate = React.useCallback((): string => {
-    return (isRequired && selectedOptions.length === 0) ? REQUIRED_MSG : '';
+    return isRequired && selectedOptions.length === 0 ? REQUIRED_MSG : '';
   }, [isRequired, selectedOptions]);
 
-  // Commit: send null when empty; numbers for lookup
+  // Commit into GlobalFormData in the exact shape expected by the chosen API
   const commitValue = React.useCallback(() => {
     const err = validate();
     reportError(err);
 
-    const targetId = isLookup ? `${id}Id` : id;
-
     if (isLookup) {
-      const nums = selectedOptions.map(k => Number(k)).filter(n => Number.isFinite(n));
-      GlobalFormData[targetId] = nums.length === 0 ? null : multiSelect ? nums : nums[0];
+      const nums = selectedOptions
+        .map(k => Number(k))
+        .filter(n => Number.isFinite(n));
+
+      if (apiFlavor === 'graph') {
+        // GRAPH: <InternalName>LookupId
+        (GlobalFormData as any)[targetFieldName] = isMulti
+          ? nums                                // number[]
+          : (nums[0] ?? null);                  // number | null
+      } else {
+        // REST: <InternalName>Id
+        (GlobalFormData as any)[targetFieldName] = isMulti
+          ? { results: nums }                   // { results: number[] }
+          : (nums[0] ?? null);                  // number | null
+      }
     } else {
-      GlobalFormData[targetId] = selectedOptions.length === 0 ? null : multiSelect ? selectedOptions : selectedOptions[0];
+      // Non-lookup
+      if (isMulti) {
+        (GlobalFormData as any)[targetFieldName] =
+          apiFlavor === 'graph'
+            ? selectedOptions                   // string[]
+            : { results: selectedOptions };     // REST: {results:string[]}
+      } else {
+        (GlobalFormData as any)[targetFieldName] = selectedOptions[0] ?? null;
+      }
     }
 
     const labels = selectedOptions.map(k => keyToText.get(k) ?? k);
     setDisplayOverride(labels.join('; '));
-  }, [validate, reportError, GlobalFormData, id, isLookup, multiSelect, selectedOptions, keyToText]);
+  }, [
+    apiFlavor,
+    GlobalFormData,
+    isLookup,
+    isMulti,
+    keyToText,
+    reportError,
+    selectedOptions,
+    targetFieldName,
+    validate,
+  ]);
 
+  // Handle UI events
   const handleOptionSelect = (
-    e: unknown,
+    _e: unknown,
     data: { optionValue: string | number; selectedOptions: (string | number)[] }
   ) => {
     const next = (data.selectedOptions ?? []).map(toKey);
@@ -232,28 +336,25 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     commitValue();
   };
 
-  // SemiColon-joined labels for display
+  // Render helpers
   const selectedLabels = selectedOptions.map(k => keyToText.get(k) ?? k);
   const joinedText = selectedLabels.join('; ');
   const triggerText = displayOverride || joinedText;
   const triggerPlaceholder = triggerText || placeholder || '';
 
-  // Build class and attributes so parent CSS gray-out continues to work
   const disabledClass = isDisabled ? 'is-disabled' : '';
   const rootClassName = [className, disabledClass].filter(Boolean).join(' ');
 
   return (
-    <div
-      style={{ display: isHidden ? 'none' : 'block' }}
-    >
+    <div style={{ display: isHidden ? 'none' : 'block' }}>
       <Field
         label={displayName}
         required={isRequired}
-        validationMessage={error ? error : undefined}
+        validationMessage={error || undefined}
         validationState={error ? 'error' : undefined}
       >
         {isDisabled ? (
-          // Disabled Input to retain gray-out visuals and keep text visible
+          // Keep gray-out visuals but show the selected text
           <Input
             id={id}
             disabled
@@ -266,7 +367,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
         ) : (
           <Dropdown
             id={id}
-            multiselect={multiSelect}
+            multiselect={isMulti}
             disabled={false}
             inlinePopup={true}
             selectedOptions={selectedOptions}
@@ -286,6 +387,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
           </Dropdown>
         )}
       </Field>
+
       {description && <div className="descriptionText">{description}</div>}
     </div>
   );
