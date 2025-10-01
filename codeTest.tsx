@@ -1,4 +1,3 @@
-
 import * as React from 'react';
 import {
   Field,
@@ -50,7 +49,7 @@ type GlobalFormDataShape = Record<string, unknown>;
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
 const toKey = (k: unknown): string => (k == null ? '' : String(k));
 
-/** Strip trailing Id/LookupId so we can re-append correct suffix cleanly */
+/** Strip trailing Id/LookupId so we can re-append the correct suffix cleanly */
 function baseName(name: string): string {
   return name.replace(/(Lookup)?Id$/i, '');
 }
@@ -127,7 +126,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
   const isLookup: boolean = fieldType === 'lookup' || /(Lookup)?Id$/i.test(id);
   const isMulti: boolean = !!multiSelect || !!multiselect;
 
-  // Context (shape kept narrow to avoid implicit any)
+  // Use your actual DynamicFormContext shape (from your screenshot)
   const {
     FormData,
     GlobalFormData,
@@ -138,17 +137,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     userBasedPerms,
     curUserInfo,
     listCols,
-  } = React.useContext(DynamicFormContext) as {
-    FormData: Record<string, unknown>;
-    GlobalFormData: GlobalFormDataShape;
-    FormMode: number;
-    GlobalErrorHandle?: (fieldName: string, msg: string | null) => void;
-    AllDisableFields?: unknown;
-    AllHiddenFields?: unknown;
-    userBasedPerms?: unknown;
-    curUserInfo?: unknown;
-    listCols?: unknown;
-  };
+  } = React.useContext(DynamicFormContext);
 
   const [isRequired, setIsRequired] = React.useState<boolean>(!!requiredProp);
   const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabledProp);
@@ -213,23 +202,23 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     if (isLookup) {
       if (isMulti) {
         const mv =
-          (FormData?.[base] as unknown) ??
-          (FormData?.[`${base}LookupId`] as unknown) ??
-          (FormData?.[`${base}Id`] as unknown) ??
-          (FormData?.[id] as unknown);
+          (FormData as any)?.[base] ??
+          (FormData as any)?.[`${base}LookupId`] ??
+          (FormData as any)?.[`${base}Id`] ??
+          (FormData as any)?.[id];
         raw = extractMultiLookupRaw(mv);
       } else {
         const sv =
-          (FormData?.[`${base}LookupId`] as unknown) ?? // Graph
-          (FormData?.[`${base}Id`] as unknown) ??       // REST
-          (FormData?.[base] as unknown) ??              // plain
-          (FormData?.[id] as unknown);
+          (FormData as any)?.[`${base}LookupId`] ?? // Graph
+          (FormData as any)?.[`${base}Id`] ??       // REST
+          (FormData as any)?.[base] ??              // plain
+          (FormData as any)?.[id];
         raw = sv;
       }
     } else {
       raw = isMulti
-        ? (FormData?.[base] as unknown) ?? (FormData?.[id] as unknown)
-        : (FormData?.[base] as unknown) ?? (FormData?.[id] as unknown);
+        ? (FormData as any)?.[base] ?? (FormData as any)?.[id]
+        : (FormData as any)?.[base] ?? (FormData as any)?.[id];
     }
 
     const normalized = clampToExisting(normalizeToStringArray(raw), options);
@@ -246,21 +235,20 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     }
   }, [FormMode, submitting, selectedOptions, keyToText]);
 
-  // Field-level disable/hide rules — **keys match FormFieldsProps**
+  // ---- Field-level disable/hide rules — keys match FormFieldsProps ----
   React.useEffect(() => {
     if (FormMode === 4) return;
 
     const formFieldProps: FormFieldsProps = {
-      disabledList:  AllDisableFields,
-      hiddenList:    AllHiddenFields,
-      userBasedList: userBasedPerms,
-      curUserList:   curUserInfo,
+      disabledList:  (AllDisableFields ?? {}) as Record<string, any>,
+      hiddenList:    (AllHiddenFields ?? {}) as Record<string, any>,
+      userBasedList: (userBasedPerms ?? {}) as Record<string, any>,
+      curUserList:   (curUserInfo ?? {}) as Record<string, any>,
       curField:      displayName,
-      formStateData: FormData,
-      listColumns:   listCols,
+      formStateData: (FormData ?? {}) as Record<string, any>,
+      listColumns:   (listCols ?? {}) as Record<string, any>,
     };
 
-    // Use only the parts we need from the return type
     const results =
       (formFieldsSetup(formFieldProps) as Array<{ isDisabled?: boolean; isHidden?: boolean }>) ?? [];
 
@@ -410,3 +398,4 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     </div>
   );
 }
+
