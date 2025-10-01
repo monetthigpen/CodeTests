@@ -126,7 +126,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
   const isLookup: boolean = fieldType === 'lookup' || /(Lookup)?Id$/i.test(id);
   const isMulti: boolean = !!multiSelect || !!multiselect;
 
-  // Use your actual DynamicFormContext shape (from your screenshot)
+  // Use your actual DynamicFormContext shape
   const {
     FormData,
     GlobalFormData,
@@ -235,18 +235,26 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     }
   }, [FormMode, submitting, selectedOptions, keyToText]);
 
-  // ---- Field-level disable/hide rules — keys match FormFieldsProps ----
+  // ---- Field-level disable/hide rules — keys match your FormFieldsProps ----
   React.useEffect(() => {
     if (FormMode === 4) return;
 
+    // `formStateData` expects a string[] in your interface -> pass FormData keys
+    const formStateKeys: string[] = Array.isArray(FormData)
+      ? (FormData as string[])
+      : Object.keys((FormData ?? {}) as Record<string, unknown>);
+
+    // many projects model listCols as an array; normalize defensively
+    const listColsArray: any[] = Array.isArray(listCols) ? (listCols as any[]) : [];
+
     const formFieldProps: FormFieldsProps = {
-      disabledList:  (AllDisableFields ?? {}) as Record<string, any>,
-      hiddenList:    (AllHiddenFields ?? {}) as Record<string, any>,
-      userBasedList: (userBasedPerms ?? {}) as Record<string, any>,
-      curUserList:   (curUserInfo ?? {}) as Record<string, any>,
+      disabledList:  ((AllDisableFields ?? {}) as Record<string, any>),
+      hiddenList:    ((AllHiddenFields ?? {}) as Record<string, any>),
+      userBasedList: ((userBasedPerms ?? {}) as Record<string, any>),
+      curUserList:   ((curUserInfo ?? {}) as Record<string, any>),
       curField:      displayName,
-      formStateData: (FormData ?? {}) as Record<string, any>,
-      listColumns:   (listCols ?? {}) as Record<string, any>,
+      formStateData: formStateKeys,             // ✅ now string[]
+      listColumns:   listColsArray,             // ✅ now an array
     };
 
     const results =
