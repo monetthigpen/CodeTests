@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Field, Dropdown, Option, Input } from '@fluentui/react-components';
+import { Field, Dropdown, Option, Input, type OptionOnSelectData, type SelectionEvents } from '@fluentui/react-components';
 import { DynamicFormContext } from './DynamicFormContext';
 import formFieldsSetup, { FormFieldsProps } from './formFieldBased';
 
@@ -21,10 +21,11 @@ interface DropdownProps {
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
 
-const toKey = (k: unknown): string => (k == null ? '' : String(k));
+// strict (eqeqeq): catch both null and undefined
+const toKey = (k: unknown): string => (k === null || k === undefined ? '' : String(k));
 
 function normalizeToStringArray(input: unknown): string[] {
-  if (input == null) return [];
+  if (input === null || input === undefined) return [];
 
   // REST multi: { results: [] }
   if (
@@ -59,8 +60,8 @@ function clampToExisting(values: string[], opts: { key: string | number }[]): st
 }
 
 export default function DropdownComponent(props: DropdownProps): JSX.Element {
-  // Used to get the DOM element (esp. for lookup)
-  const elemRef = React.useRef<HTMLDivElement | null>(null);
+  // NOTE: Fluent v9 Dropdown triggers a BUTTON -> ref must be HTMLButtonElement
+  const elemRef = React.useRef<HTMLButtonElement | null>(null); // used to get the DOM element especially to get lookup values
 
   const {
     id,
@@ -84,7 +85,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     GlobalFormData,
     FormMode,
     GlobalErrorHandle,
-    GlobalRefs,
+    GlobalRefs,           // <- function in your context
     AllDisableFields,
     AllHiddenFields,
     userBasedPerms,
@@ -136,10 +137,12 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     }
   }, [submitting, defaultIsDisable, selectedOptions, keyToText]);
 
-  // Keep a ref entry (id -> element)
+  // Register element with your GlobalRefs FUNCTION (fixes the "Record<string, unknown>" error)
   React.useEffect((): void => {
-    if (GlobalRefs) {
-      (GlobalRefs as Record<string, unknown>)[id] = elemRef.current ?? undefined;
+    if (typeof GlobalRefs === 'function') {
+      // your context shows GlobalRefs signature like (elmIntrnName: string | undefined) => void
+      // call once with id (many apps just register key; pass element if your function accepts it)
+      (GlobalRefs as (name?: string) => void)(id);
     }
   }, [GlobalRefs, id]);
 
@@ -294,8 +297,9 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     setDisplayOverride(labels.join('; '));
   }, [validate, reportError, GlobalFormData, id, isLookup, multiSelect, selectedOptions, keyToText]);
 
+  // Proper v9 types — fixes your onOptionSelect type error
   const handleOptionSelect = React.useCallback(
-    (_e: unknown, data: { optionValue: string | number; selectedOptions: (string | number)[] }): void => {
+    (_e: SelectionEvents, data: OptionOnSelectData): void => {
       const next = (data.selectedOptions ?? []).map(toKey);
       setSelectedOptions(next);
       if (!touched) reportError(isRequired && next.length === 0 ? REQUIRED_MSG : '');
@@ -353,7 +357,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
             placeholder={triggerPlaceholder}
             title={triggerText || displayName}
             aria-label={triggerText || displayName}
-            ref={elemRef as unknown as React.RefObject<HTMLDivElement>}
+            ref={elemRef}   // HTMLButtonElement ref (✅ matches v9)
           >
             {options.map(o => (
               <Option key={toKey(o.key)} value={toKey(o.key)}>
