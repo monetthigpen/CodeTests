@@ -1,7 +1,14 @@
 import * as React from 'react';
-import { Field, Dropdown, Option, Input } from '@fluentui/react-components';
+import {
+  Field,
+  Dropdown,
+  Option,
+  Input,
+  type SelectionEvents,
+  type OptionOnSelectData,
+} from '@fluentui/react-components';
 import { DynamicFormContext } from './DynamicFormContext';
-import formFieldsSetup, { FormFieldsProps } from './formFieldBased';
+import formFieldsSetup, { type FormFieldsProps } from './formFieldBased';
 
 interface DropdownProps {
   id: string;
@@ -21,14 +28,14 @@ interface DropdownProps {
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
 
-// keep original nullish semantics
+// Keep original nullish semantics
 // eslint-disable-next-line eqeqeq
 const toKey = (k: unknown): string => (k == null ? '' : String(k));
 
 function normalizeToStringArray(input: unknown): string[] {
   if (input === null || input === undefined) return [];
 
-  // REST multi: { results: [] }
+  // SharePoint REST multi: { results: [] }
   if (
     typeof input === 'object' &&
     input !== null &&
@@ -59,8 +66,8 @@ function clampToExisting(values: string[], opts: { key: string | number }[]): st
 }
 
 export default function DropdownComponent(props: DropdownProps): JSX.Element {
-  // NOTE: Fluent v9 Dropdown trigger is a button; keep ref permissive to avoid TS noise
-  const elemRef = React.useRef<HTMLButtonElement | null>(null); // used to get the DOM element especially to get look up values
+  // Fluent v9 Dropdown trigger is a button
+  const elemRef = React.useRef<HTMLButtonElement | null>(null);
 
   const {
     id,
@@ -69,7 +76,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     isRequired: requiredProp = false,
     placeholder,
     multiSelect = false,
-    multiselect: multiselectProp = false, // ✅ added: alias v9 prop safely
+    multiselect: multiselectProp = false, // accept both spellings
     fieldType,
     options,
     className,
@@ -78,9 +85,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     submitting = false,
   } = props;
 
-  // ✅ single source of truth for multiselect behavior (v8 + v9)
   const isMulti = !!multiSelect || !!multiselectProp;
-
   const isLookup = fieldType === 'lookup';
 
   const {
@@ -111,7 +116,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
   const isLockedRef = React.useRef<boolean>(false);
   const didInitRef = React.useRef<boolean>(false);
 
-  const keyToText = React.useMemo(() => {
+  const keyToText = React.useMemo((): Map<string, string> => {
     const m = new Map<string, string>();
     for (const o of options) m.set(toKey(o.key), o.text);
     return m;
@@ -123,13 +128,13 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     GlobalErrorHandle?.(targetId, msg || null);
   }, [GlobalErrorHandle, id, isLookup]);
 
-  React.useEffect(() => {
+  React.useEffect((): void => {
     setIsRequired(!!requiredProp);
     setIsDisabled(!!disabledProp);
   }, [requiredProp, disabledProp]);
 
-  // Submitting disables and locks display text (kept as-is)
-  React.useEffect(() => {
+  // Submitting disables and locks display text
+  React.useEffect((): void => {
     if (defaultIsDisable === false) {
       setIsDisabled(!!submitting);
     } else {
@@ -140,56 +145,54 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     }
   }, [submitting, defaultIsDisable, selectedOptions, keyToText]);
 
-  // Register ref with your context (function in your setup)
-  React.useEffect(() => {
+  // Register ref with context (supports function or map-like forms)
+  React.useEffect((): void => {
     if (typeof GlobalRefs === 'function') {
       (GlobalRefs as (elmIntrnName?: string) => void)(id);
     } else {
-      // fallback if elsewhere it's a map
       (GlobalRefs as unknown as Record<string, unknown>)[id] = elemRef.current ?? undefined;
     }
   }, [GlobalRefs, id]);
 
-  // Prefill and rule-based disable/hide  (structure preserved)
-  React.useEffect(() => {
-    const ensureInOptions = (vals: string[]) => clampToExisting(vals, options);
+  // Prefill and rule-based disable/hide
+  React.useEffect((): void => {
+    const ensureInOptions = (vals: string[]): string[] => clampToExisting(vals, options);
 
     if (!isLockedRef.current) {
       if (!didInitRef.current) {
         if (FormMode !== 3) {
-          const initArr =
-            Array.isArray(starterValue)
-              ? (starterValue as Array<string | number>).map(toKey)
-              : [toKey(starterValue)];
+          const initArr = Array.isArray(starterValue)
+            ? (starterValue as Array<string | number>).map(toKey)
+            : [toKey(starterValue)];
           const clamped = ensureInOptions(initArr);
           if (clamped.length !== selectedOptions.length || clamped.some((v, i) => v !== selectedOptions[i])) {
             setSelectedOptions(clamped);
           }
-        }
-      } else {
-        let raw: unknown;
-        if (isLookup) {
-          if (isMulti) {
-            const mLookup = (FormData as any)?.[id];
-            raw = Array.isArray(mLookup)
-              ? (mLookup as Array<Record<string, unknown>>).map(v => (v as { LookupId?: unknown }).LookupId)
-              : [];
-          } else {
-            raw = (FormData as any)?.[`${id}LookupId`];
-          }
         } else {
-          raw = (FormData as any)?.[id];
+          let raw: unknown;
+          if (isLookup) {
+            if (isMulti) {
+              const mLookup = (FormData as Record<string, unknown> | undefined)?.[id];
+              raw = Array.isArray(mLookup)
+                ? (mLookup as Array<Record<string, unknown>>).map(v => (v as { LookupId?: unknown }).LookupId)
+                : [];
+            } else {
+              raw = (FormData as Record<string, unknown> | undefined)?.[`${id}LookupId`];
+            }
+          } else {
+            raw = (FormData as Record<string, unknown> | undefined)?.[id];
+          }
+          const arr = ensureInOptions(normalizeToStringArray(raw));
+          if (arr.length !== selectedOptions.length || arr.some((v, i) => v !== selectedOptions[i])) {
+            setSelectedOptions(arr);
+          }
         }
-        const arr = ensureInOptions(normalizeToStringArray(raw));
-        if (arr.length !== selectedOptions.length || arr.some((v, i) => v !== selectedOptions[i])) {
-          setSelectedOptions(arr);
+        didInitRef.current = true;
+      } else {
+        const clamped = ensureInOptions(selectedOptions);
+        if (clamped.length !== selectedOptions.length || clamped.some((v, i) => v !== selectedOptions[i])) {
+          setSelectedOptions(clamped);
         }
-      }
-      didInitRef.current = true;
-    } else {
-      const clamped = ensureInOptions(selectedOptions);
-      if (clamped.length !== selectedOptions.length || clamped.some((v, i) => v !== selectedOptions[i])) {
-        setSelectedOptions(clamped);
       }
     }
 
@@ -205,21 +208,23 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
         userBasedList: ((userBasedPerms ?? {}) as unknown as Record<string, unknown>),
         curUserList:   ((curUserInfo ?? {}) as unknown as Record<string, unknown>),
         curField:      displayName,
-        // your interface often wants string[] — pass keys to keep it simple
-        formStateData: Array.isArray(FormData) ? (FormData as string[]) : Object.keys((FormData ?? {}) as Record<string, unknown>),
+        // Many implementations expect string[]; pass known keys if object
+        formStateData: Array.isArray(FormData)
+          ? (FormData as string[])
+          : Object.keys((FormData ?? {}) as Record<string, unknown>),
         listColumns:   Array.isArray(listCols) ? (listCols as string[]).map(String) : [],
       } as unknown as FormFieldsProps;
 
-      const results = (formFieldsSetup(formFieldProps) || []) as Array<{ isDisabled?: boolean; isHidden?: boolean }>;
+      const results =
+        (formFieldsSetup(formFieldProps) as Array<{ isDisabled?: boolean; isHidden?: boolean }>) ?? [];
+
       if (results.length > 0) {
         for (let i = 0; i < results.length; i++) {
-          const d = results[i].isDisabled;
-          if (d !== undefined) {
-            setIsDisabled(!!d);
-            setDefaultIsDisable(!!d);
+          if (results[i].isDisabled !== undefined) {
+            setIsDisabled(Boolean(results[i].isDisabled));
+            setDefaultIsDisable(Boolean(results[i].isDisabled));
           }
-          const h = results[i].isHidden;
-          if (h !== undefined) setIsHidden(!!h);
+          if (results[i].isHidden !== undefined) setIsHidden(Boolean(results[i].isHidden));
         }
       }
 
@@ -240,7 +245,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     displayName,
     options,
     isLookup,
-    isMulti,           // ✅ so multi-select mode toggles correctly
+    isMulti,
     AllDisableFields,
     AllHiddenFields,
     userBasedPerms,
@@ -258,7 +263,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     return '';
   }, [isRequired, selectedOptions]);
 
-  // Commit: send null when empty; numbers for lookup
+  // Commit: send undefined when empty; numbers for lookup (Graph prefers numbers)
   const commitValue = React.useCallback((): void => {
     const err = validate();
     reportError(err);
@@ -268,14 +273,14 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     if (isLookup) {
       const nums = selectedOptions.map(k => Number(k)).filter(n => Number.isFinite(n));
       if (isMulti) {
-        (GlobalFormData as (name: string, value: unknown) => void)(targetId, nums.length === 0 ? null : nums);
+        (GlobalFormData as (name: string, value: unknown) => void)(targetId, nums.length === 0 ? undefined : nums);
       } else {
-        (GlobalFormData as (name: string, value: unknown) => void)(targetId, nums.length === 0 ? null : nums[0]);
+        (GlobalFormData as (name: string, value: unknown) => void)(targetId, nums.length === 0 ? undefined : nums[0]);
       }
     } else {
       (GlobalFormData as (name: string, value: unknown) => void)(
         targetId,
-        selectedOptions.length === 0 ? null : (isMulti ? selectedOptions : selectedOptions[0])
+        selectedOptions.length === 0 ? undefined : (isMulti ? selectedOptions : selectedOptions[0])
       );
     }
 
@@ -283,9 +288,9 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     setDisplayOverride(labels.join('; '));
   }, [validate, reportError, GlobalFormData, id, isLookup, isMulti, selectedOptions, keyToText]);
 
-  // Keep handler permissive to mirror your “no errors” state
-  const handleOptionSelect = (_e: any, data: any): void => {
-    const next = (data?.selectedOptions ?? []).map(toKey);
+  // Fluent v9 types; no 'any'
+  const handleOptionSelect = (_e: SelectionEvents, data: OptionOnSelectData): void => {
+    const next = (data.selectedOptions ?? []).map(toKey);
     setSelectedOptions(next);
     if (!touched) reportError(isRequired && next.length === 0 ? REQUIRED_MSG : '');
   };
@@ -329,7 +334,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
         ) : (
           <Dropdown
             id={id}
-            multiselect={isMulti}                      {/* ✅ unified flag */}
+            multiselect={isMulti}
             disabled={false}
             inlinePopup={true}
             selectedOptions={selectedOptions}
@@ -340,7 +345,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
             placeholder={triggerPlaceholder}
             title={triggerText || displayName}
             aria-label={triggerText || displayName}
-            ref={elemRef as any}                       {/* ✅ permissive ref cast */}
+            ref={elemRef}
           >
             {options.map(o => (
               <Option key={toKey(o.key)} value={toKey(o.key)}>
