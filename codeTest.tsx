@@ -10,11 +10,9 @@ import {
 import { DynamicFormContext } from './DynamicFormContext';
 import formFieldsSetup, { type FormFieldsProps } from './formFieldBased';
 
-/** Option type for the dropdown */
 type Opt = { key: string | number; text: string };
 
 interface DropdownProps {
-  /** Base SharePoint internal name (no suffix). If you pass ...Id/LookupId, we’ll strip it. */
   id: string;
   displayName: string;
   options: Opt[];
@@ -23,60 +21,57 @@ interface DropdownProps {
   isRequired?: boolean;
   placeholder?: string;
 
-  /** v8 prop name for multi */
+  /** v8 style */
   multiSelect?: boolean;
-  /** v9 prop name for multi */
+  /** v9 style */
   multiselect?: boolean;
 
-  /** Set to "lookup" if this is a lookup field (auto-detected if id ends w/ Id/LookupId) */
-  fieldType?: string;
+  /** mark as lookup, otherwise inferred by id suffixes if you prefer */
+  fieldType?: 'lookup' | string;
 
   className?: string;
   description?: string;
   disabled?: boolean;
   submitting?: boolean;
 
-  /**
-   * API payload shape:
-   *  - 'graph' (default): <InternalName>LookupId with number | number[]
-   *  - 'rest'           : <InternalName>Id with number | {results:number[]}
-   */
+  /** 'graph' => LookupId field, 'rest' => Id / {results:[]} (you can swap when you wire REST) */
   apiFlavor?: 'graph' | 'rest';
 }
 
-type GlobalFormDataShape = Record<string, unknown>;
+/* -------------------- helpers (typed & lint-clean) -------------------- */
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
+
 const toKey = (k: unknown): string => (k == null ? '' : String(k));
 
-/** Strip trailing Id/LookupId so we can re-append the correct suffix cleanly */
-function baseName(name: string): string {
-  return name.replace(/(Lookup)?Id$/i, '');
-}
+/** Remove trailing Id/LookupId so we can append the right suffix cleanly */
+const baseName = (name: string): string => name.replace(/(Lookup)?Id$/i, '');
 
-/** Keep only keys that exist in options */
-function clampToExisting(values: string[], opts: Opt[]): string[] {
+const clampToExisting = (values: string[], opts: Opt[]): string[] => {
   const allowed = new Set(opts.map(o => toKey(o.key)));
   return values.filter(v => allowed.has(v));
-}
+};
 
-/** Normalize any unknown value into string[] (handles {results:[]}, arrays, semicolons) */
-function normalizeToStringArray(input: unknown): string[] {
+const normalizeToStringArray = (input: unknown): string[] => {
   if (input == null) return [];
 
-  // REST multi: { results: any[] }
-  if (typeof input === 'object' && input !== null && Array.isArray((input as { results?: unknown[] }).results)) {
+  // REST multi: {results: []}
+  if (
+    typeof input === 'object' &&
+    input !== null &&
+    Array.isArray((input as { results?: unknown[] }).results)
+  ) {
     return ((input as { results: unknown[] }).results).map(toKey);
   }
 
   if (Array.isArray(input)) {
-    if (input.length > 0 && typeof input[0] === 'object' && input[0] !== null) {
-      // Array of objects (edit/display)
-      return (input as Array<Record<string, unknown>>).map(o =>
+    const arr = input as unknown[];
+    if (arr.length > 0 && typeof arr[0] === 'object' && arr[0] !== null) {
+      return (arr as Array<Record<string, unknown>>).map(o =>
         toKey((o as { LookupId?: unknown; Id?: unknown }).LookupId ?? (o as { Id?: unknown }).Id ?? o)
       );
     }
-    return (input as Array<string | number>).map(toKey);
+    return (arr as Array<string | number>).map(toKey);
   }
 
   if (typeof input === 'string' && input.includes(';')) {
@@ -84,25 +79,29 @@ function normalizeToStringArray(input: unknown): string[] {
   }
 
   return [toKey(input)];
-}
+};
 
-/** For multi-lookup when reading from FormData in various shapes */
-function extractMultiLookupRaw(v: unknown): string[] {
-  // REST: {results:number[]}
-  if (v && typeof v === 'object' && Array.isArray((v as { results?: unknown[] }).results)) {
+const extractMultiLookupRaw = (v: unknown): string[] => {
+  if (
+    v &&
+    typeof v === 'object' &&
+    Array.isArray((v as { results?: unknown[] }).results)
+  ) {
     return ((v as { results: unknown[] }).results).map(toKey);
   }
-  // Graph: number[] or array of objects
   if (Array.isArray(v)) {
-    if (v.length > 0 && typeof v[0] === 'object' && v[0] !== null) {
-      return (v as Array<Record<string, unknown>>).map(x =>
+    const arr = v as unknown[];
+    if (arr.length > 0 && typeof arr[0] === 'object' && arr[0] !== null) {
+      return (arr as Array<Record<string, unknown>>).map(x =>
         toKey((x as { LookupId?: unknown; Id?: unknown }).LookupId ?? (x as { Id?: unknown }).Id ?? x)
       );
     }
-    return (v as Array<number | string>).map(toKey);
+    return (arr as Array<number | string>).map(toKey);
   }
   return normalizeToStringArray(v);
-}
+};
+
+/* -------------------- component -------------------- */
 
 export default function DropdownComponent(props: DropdownProps): JSX.Element {
   const {
@@ -122,11 +121,10 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     apiFlavor = 'graph',
   } = props;
 
-  // Treat as lookup if explicitly set OR id ends with Id/LookupId
-  const isLookup: boolean = fieldType === 'lookup' || /(Lookup)?Id$/i.test(id);
-  const isMulti: boolean = !!multiSelect || !!multiselect;
+  const isLookup = fieldType === 'lookup';
+  const isMulti = !!multiSelect || !!multiselect;
 
-  // Use your actual DynamicFormContext shape
+  // Use your context as-is; its default values make properties defined
   const {
     FormData,
     GlobalFormData,
@@ -139,6 +137,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     listCols,
   } = React.useContext(DynamicFormContext);
 
+  // state
   const [isRequired, setIsRequired] = React.useState<boolean>(!!requiredProp);
   const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabledProp);
   const [isHidden, setIsHidden] = React.useState<boolean>(false);
@@ -150,14 +149,14 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
   const isLockedRef = React.useRef<boolean>(false);
   const didInitRef = React.useRef<boolean>(false);
 
-  // key -> text map
+  // key -> text
   const keyToText = React.useMemo<Map<string, string>>(() => {
     const m = new Map<string, string>();
     for (const o of options) m.set(toKey(o.key), o.text);
     return m;
   }, [options]);
 
-  /** Actual field name we will commit to (Graph vs REST) */
+  // where we actually write in the outbound payload
   const targetFieldName = React.useMemo<string>(() => {
     if (isLookup) {
       const base = baseName(id);
@@ -166,25 +165,22 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     return id;
   }, [apiFlavor, id, isLookup]);
 
-  /** Report error against the real commit field name */
   const reportError = React.useCallback((msg: string): void => {
     setError(msg || '');
     GlobalErrorHandle?.(targetFieldName, msg || null);
   }, [GlobalErrorHandle, targetFieldName]);
 
-  // React to prop changes
-  React.useEffect(() => {
+  React.useEffect((): void => {
     setIsRequired(!!requiredProp);
     setIsDisabled(!!disabledProp);
   }, [requiredProp, disabledProp]);
 
-  // Initialize / refresh from FormData + starterValue
-  React.useEffect(() => {
+  // initialize + reflect FormData
+  React.useEffect((): void => {
     if (isLockedRef.current) return;
 
     const base = baseName(id);
 
-    // First pass: use starterValue (e.g., create form)
     if (!didInitRef.current) {
       if (FormMode !== 3) {
         const initArr = Array.isArray(starterValue)
@@ -196,37 +192,36 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
       return;
     }
 
-    // Subsequent passes: reflect FormData
     let raw: unknown;
 
     if (isLookup) {
       if (isMulti) {
         const mv =
-          (FormData as any)?.[base] ??
-          (FormData as any)?.[`${base}LookupId`] ??
-          (FormData as any)?.[`${base}Id`] ??
-          (FormData as any)?.[id];
+          (FormData as Record<string, unknown> | undefined)?.[base] ??
+          (FormData as Record<string, unknown> | undefined)?.[`${base}LookupId`] ??
+          (FormData as Record<string, unknown> | undefined)?.[`${base}Id`] ??
+          (FormData as Record<string, unknown> | undefined)?.[id];
         raw = extractMultiLookupRaw(mv);
       } else {
         const sv =
-          (FormData as any)?.[`${base}LookupId`] ?? // Graph
-          (FormData as any)?.[`${base}Id`] ??       // REST
-          (FormData as any)?.[base] ??              // plain
-          (FormData as any)?.[id];
+          (FormData as Record<string, unknown> | undefined)?.[`${base}LookupId`] ??
+          (FormData as Record<string, unknown> | undefined)?.[`${base}Id`] ??
+          (FormData as Record<string, unknown> | undefined)?.[base] ??
+          (FormData as Record<string, unknown> | undefined)?.[id];
         raw = sv;
       }
     } else {
-      raw = isMulti
-        ? (FormData as any)?.[base] ?? (FormData as any)?.[id]
-        : (FormData as any)?.[base] ?? (FormData as any)?.[id];
+      raw =
+        (FormData as Record<string, unknown> | undefined)?.[base] ??
+        (FormData as Record<string, unknown> | undefined)?.[id];
     }
 
     const normalized = clampToExisting(normalizeToStringArray(raw), options);
     setSelectedOptions(normalized);
   }, [FormData, FormMode, id, isLookup, isMulti, options, starterValue]);
 
-  // Lock & show display text when submitting or in read-only mode
-  React.useEffect(() => {
+  // lock & show text if submitting or read-only
+  React.useEffect((): void => {
     if (submitting || FormMode === 4) {
       setIsDisabled(true);
       isLockedRef.current = true;
@@ -235,35 +230,32 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     }
   }, [FormMode, submitting, selectedOptions, keyToText]);
 
-  // ---- Field-level disable/hide rules — keys match your FormFieldsProps ----
-  React.useEffect(() => {
+  // field-level disable/hide
+  React.useEffect((): void => {
     if (FormMode === 4) return;
 
-    // `formStateData` expects a string[] in your interface -> pass FormData keys
+    // Your FormFieldsProps in your project expects these keys and (often) array/object types
     const formStateKeys: string[] = Array.isArray(FormData)
       ? (FormData as string[])
       : Object.keys((FormData ?? {}) as Record<string, unknown>);
 
-    // many projects model listCols as an array; normalize defensively
-    const listColsArray: any[] = Array.isArray(listCols) ? (listCols as any[]) : [];
-
     const formFieldProps: FormFieldsProps = {
-      disabledList:  ((AllDisableFields ?? {}) as Record<string, any>),
-      hiddenList:    ((AllHiddenFields ?? {}) as Record<string, any>),
-      userBasedList: ((userBasedPerms ?? {}) as Record<string, any>),
-      curUserList:   ((curUserInfo ?? {}) as Record<string, any>),
+      disabledList:  (AllDisableFields ?? {}) as Record<string, unknown>,
+      hiddenList:    (AllHiddenFields ?? {}) as Record<string, unknown>,
+      userBasedList: (userBasedPerms ?? {}) as Record<string, unknown>,
+      curUserList:   (curUserInfo ?? {}) as Record<string, unknown>,
       curField:      displayName,
-      formStateData: formStateKeys,             // ✅ now string[]
-      listColumns:   listColsArray,             // ✅ now an array
+      formStateData: formStateKeys, // string[]
+      listColumns:   (Array.isArray(listCols) ? listCols : []) as unknown[], // keep as array form
     };
 
     const results =
       (formFieldsSetup(formFieldProps) as Array<{ isDisabled?: boolean; isHidden?: boolean }>) ?? [];
 
     if (results.length > 0) {
-      for (let i = 0; i < results.length; i++) {
-        if (results[i].isDisabled !== undefined) setIsDisabled(results[i].isDisabled as boolean);
-        if (results[i].isHidden   !== undefined) setIsHidden(results[i].isHidden as boolean);
+      for (let i = 0; i < results.length; i += 1) {
+        if (typeof results[i].isDisabled === 'boolean') setIsDisabled(results[i].isDisabled);
+        if (typeof results[i].isHidden === 'boolean') setIsHidden(results[i].isHidden);
       }
     }
 
@@ -286,17 +278,15 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     userBasedPerms,
   ]);
 
-  // Validation
+  // validation
   const validate = React.useCallback((): string => {
     return isRequired && selectedOptions.length === 0 ? REQUIRED_MSG : '';
   }, [isRequired, selectedOptions]);
 
-  // Commit into GlobalFormData in the exact shape expected by the chosen API
+  // commit into GlobalFormData
   const commitValue = React.useCallback((): void => {
     const err = validate();
     reportError(err);
-
-    const dest = GlobalFormData as GlobalFormDataShape;
 
     if (isLookup) {
       const nums = selectedOptions
@@ -304,20 +294,27 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
         .filter((n): n is number => Number.isFinite(n));
 
       if (apiFlavor === 'graph') {
-        // Graph: <InternalName>LookupId
-        dest[targetFieldName] = isMulti ? nums : (nums[0] ?? null);
+        (GlobalFormData as (n: string, v: unknown) => void)(
+          targetFieldName,
+          isMulti ? nums : (nums[0] ?? null)
+        );
       } else {
-        // REST: <InternalName>Id
-        dest[targetFieldName] = isMulti ? { results: nums } : (nums[0] ?? null);
+        (GlobalFormData as (n: string, v: unknown) => void)(
+          targetFieldName,
+          isMulti ? { results: nums } : (nums[0] ?? null)
+        );
       }
     } else {
-      // Non-lookup (choice/text/etc.)
-      if (isMulti) {
-        dest[targetFieldName] = apiFlavor === 'graph'
-          ? selectedOptions
-          : { results: selectedOptions }; // REST shape
+      if (apiFlavor === 'graph') {
+        (GlobalFormData as (n: string, v: unknown) => void)(
+          targetFieldName,
+          isMulti ? selectedOptions : (selectedOptions[0] ?? null)
+        );
       } else {
-        dest[targetFieldName] = selectedOptions[0] ?? null;
+        (GlobalFormData as (n: string, v: unknown) => void)(
+          targetFieldName,
+          isMulti ? { results: selectedOptions } : (selectedOptions[0] ?? null)
+        );
       }
     }
 
@@ -335,12 +332,14 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     validate,
   ]);
 
-  // Handle UI events (Fluent v9 types; properties may be undefined)
+  // handlers (typed)
   const handleOptionSelect = React.useCallback(
     (_e: SelectionEvents, data: OptionOnSelectData): void => {
       const next = (data.selectedOptions ?? []).map(toKey);
       setSelectedOptions(next);
-      if (!touched) reportError(isRequired && next.length === 0 ? REQUIRED_MSG : '');
+      if (!touched) {
+        reportError(isRequired && next.length === 0 ? REQUIRED_MSG : '');
+      }
     },
     [isRequired, reportError, touched]
   );
@@ -350,7 +349,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     commitValue();
   }, [commitValue]);
 
-  // Render helpers
+  // render helpers
   const selectedLabels = selectedOptions.map(k => keyToText.get(k) ?? k);
   const joinedText = selectedLabels.join('; ');
   const triggerText = displayOverride || joinedText;
@@ -368,7 +367,6 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
         validationState={error ? 'error' : undefined}
       >
         {isDisabled ? (
-          // Keep gray-out visuals but show the selected text
           <Input
             id={id}
             disabled
@@ -406,4 +404,5 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     </div>
   );
 }
+
 
