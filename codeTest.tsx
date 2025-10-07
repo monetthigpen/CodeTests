@@ -28,9 +28,15 @@ interface DropdownProps {
 
 const REQUIRED_MSG = 'This is a required field and cannot be blank!';
 
+// ==== helpers ================================================================
+
 // Keep original nullish semantics
 // eslint-disable-next-line eqeqeq
 const toKey = (k: unknown): string => (k == null ? '' : String(k));
+
+// compare arrays by value to avoid setting the same state repeatedly
+const arraysEqual = (a: string[], b: string[]) =>
+  a.length === b.length && a.every((v, i) => v === b[i]);
 
 function normalizeToStringArray(input: unknown): string[] {
   if (input === null || input === undefined) return [];
@@ -65,8 +71,9 @@ function clampToExisting(values: string[], opts: { key: string | number }[]): st
   return values.filter(v => allowed.has(v));
 }
 
+// ==== component =============================================================
+
 export default function DropdownComponent(props: DropdownProps): JSX.Element {
-  // Fluent v9 Dropdown trigger is a button
   const elemRef = React.useRef<HTMLButtonElement | null>(null);
 
   const {
@@ -85,6 +92,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     submitting = false,
   } = props;
 
+  // unified multiselect flag
   const isMulti = !!multiSelect || !!multiselectProp;
   const isLookup = fieldType === 'lookup';
 
@@ -124,28 +132,30 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
 
   const reportError = React.useCallback((msg: string): void => {
     const targetId = isLookup ? `${id}LookupId` : id;
-    setError(msg || '');
+    if (msg !== error) setError(msg || '');
     GlobalErrorHandle?.(targetId, msg || null);
-  }, [GlobalErrorHandle, id, isLookup]);
+  }, [GlobalErrorHandle, id, isLookup, error]);
 
+  // keep simple syncs
   React.useEffect((): void => {
-    setIsRequired(!!requiredProp);
-    setIsDisabled(!!disabledProp);
-  }, [requiredProp, disabledProp]);
+    if (isRequired !== !!requiredProp) setIsRequired(!!requiredProp);
+    if (isDisabled !== !!disabledProp) setIsDisabled(!!disabledProp);
+  }, [requiredProp, disabledProp, isRequired, isDisabled]);
 
   // Submitting disables and locks display text
   React.useEffect((): void => {
     if (defaultIsDisable === false) {
-      setIsDisabled(!!submitting);
+      if (isDisabled !== !!submitting) setIsDisabled(!!submitting);
     } else {
-      setIsDisabled(true);
-      isLockedRef.current = true;
+      if (!isDisabled) setIsDisabled(true);
+      if (!isLockedRef.current) isLockedRef.current = true;
       const labels = selectedOptions.map(k => keyToText.get(k) ?? k);
-      setDisplayOverride(labels.join('; '));
+      const nextDisplay = labels.join('; ');
+      if (nextDisplay !== displayOverride) setDisplayOverride(nextDisplay);
     }
-  }, [submitting, defaultIsDisable, selectedOptions, keyToText]);
+  }, [submitting, defaultIsDisable, selectedOptions, keyToText, displayOverride, isDisabled]);
 
-  // Register ref with context (supports function or map-like forms)
+  // Register ref with context (supports function or map-like)
   React.useEffect((): void => {
     if (typeof GlobalRefs === 'function') {
       (GlobalRefs as (elmIntrnName?: string) => void)(id);
@@ -154,21 +164,28 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     }
   }, [GlobalRefs, id]);
 
+  // Reset error/touched on field id change (prevents effect churn)
+  React.useEffect((): void => {
+    reportError('');
+    setTouched(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
   // Prefill and rule-based disable/hide
   React.useEffect((): void => {
     const ensureInOptions = (vals: string[]): string[] => clampToExisting(vals, options);
 
     if (!isLockedRef.current) {
       if (!didInitRef.current) {
+        // Starter value path (FormMode !== 3 in your original)
         if (FormMode !== 3) {
           const initArr = Array.isArray(starterValue)
             ? (starterValue as Array<string | number>).map(toKey)
             : [toKey(starterValue)];
           const clamped = ensureInOptions(initArr);
-          if (clamped.length !== selectedOptions.length || clamped.some((v, i) => v !== selectedOptions[i])) {
-            setSelectedOptions(clamped);
-          }
+          setSelectedOptions(prev => (arraysEqual(prev, clamped) ? prev : clamped));
         } else {
+          // Read from FormData on init
           let raw: unknown;
           if (isLookup) {
             if (isMulti) {
@@ -183,24 +200,22 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
             raw = (FormData as Record<string, unknown> | undefined)?.[id];
           }
           const arr = ensureInOptions(normalizeToStringArray(raw));
-          if (arr.length !== selectedOptions.length || arr.some((v, i) => v !== selectedOptions[i])) {
-            setSelectedOptions(arr);
-          }
+          setSelectedOptions(prev => (arraysEqual(prev, arr) ? prev : arr));
         }
         didInitRef.current = true;
       } else {
+        // Clamp if options changed or values out-of-date
         const clamped = ensureInOptions(selectedOptions);
-        if (clamped.length !== selectedOptions.length || clamped.some((v, i) => v !== selectedOptions[i])) {
-          setSelectedOptions(clamped);
-        }
+        setSelectedOptions(prev => (arraysEqual(prev, clamped) ? prev : clamped));
       }
     }
 
     if (FormMode === 4) {
-      setIsDisabled(true);
-      isLockedRef.current = true;
+      if (!isDisabled) setIsDisabled(true);
+      if (!isLockedRef.current) isLockedRef.current = true;
       const labels = selectedOptions.map(k => keyToText.get(k) ?? k);
-      setDisplayOverride(labels.join('; '));
+      const nextDisplay = labels.join('; ');
+      if (nextDisplay !== displayOverride) setDisplayOverride(nextDisplay);
     } else {
       const formFieldProps: FormFieldsProps = {
         disabledList:  ((AllDisableFields ?? {}) as unknown as Record<string, unknown>),
@@ -208,7 +223,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
         userBasedList: ((userBasedPerms ?? {}) as unknown as Record<string, unknown>),
         curUserList:   ((curUserInfo ?? {}) as unknown as Record<string, unknown>),
         curField:      displayName,
-        // Many implementations expect string[]; pass known keys if object
+        // use keys when object; some setups expect string[]
         formStateData: Array.isArray(FormData)
           ? (FormData as string[])
           : Object.keys((FormData ?? {}) as Record<string, unknown>),
@@ -220,24 +235,24 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
 
       if (results.length > 0) {
         for (let i = 0; i < results.length; i++) {
-          if (results[i].isDisabled !== undefined) {
-            setIsDisabled(Boolean(results[i].isDisabled));
-            setDefaultIsDisable(Boolean(results[i].isDisabled));
+          const d = results[i].isDisabled;
+          const h = results[i].isHidden;
+          if (d !== undefined && Boolean(d) !== isDisabled) {
+            setIsDisabled(Boolean(d));
+            setDefaultIsDisable(Boolean(d));
           }
-          if (results[i].isHidden !== undefined) setIsHidden(Boolean(results[i].isHidden));
+          if (h !== undefined && Boolean(h) !== isHidden) {
+            setIsHidden(Boolean(h));
+          }
         }
       }
 
       if (!isLockedRef.current && isDisabled) {
         const labels = selectedOptions.map(k => keyToText.get(k) ?? k);
-        setDisplayOverride(labels.join('; '));
+        const nextDisplay = labels.join('; ');
+        if (nextDisplay !== displayOverride) setDisplayOverride(nextDisplay);
       }
     }
-
-    reportError('');
-    setTouched(false);
-    // keep broad deps as in your original
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     FormData,
     FormMode,
@@ -255,7 +270,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     isDisabled,
     starterValue,
     keyToText,
-    reportError,
+    displayOverride,
   ]);
 
   const validate = React.useCallback((): string => {
@@ -263,7 +278,7 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     return '';
   }, [isRequired, selectedOptions]);
 
-  // Commit: send undefined when empty; numbers for lookup (Graph prefers numbers)
+  // Commit: send undefined when empty; numbers for lookup
   const commitValue = React.useCallback((): void => {
     const err = validate();
     reportError(err);
@@ -285,18 +300,18 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
     }
 
     const labels = selectedOptions.map(k => keyToText.get(k) ?? k);
-    setDisplayOverride(labels.join('; '));
-  }, [validate, reportError, GlobalFormData, id, isLookup, isMulti, selectedOptions, keyToText]);
+    const nextDisplay = labels.join('; ');
+    if (nextDisplay !== displayOverride) setDisplayOverride(nextDisplay);
+  }, [validate, reportError, GlobalFormData, id, isLookup, isMulti, selectedOptions, keyToText, displayOverride]);
 
-  // Fluent v9 types; no 'any'
   const handleOptionSelect = (_e: SelectionEvents, data: OptionOnSelectData): void => {
     const next = (data.selectedOptions ?? []).map(toKey);
-    setSelectedOptions(next);
+    setSelectedOptions(prev => (arraysEqual(prev, next) ? prev : next));
     if (!touched) reportError(isRequired && next.length === 0 ? REQUIRED_MSG : '');
   };
 
   const handleBlur = (): void => {
-    setTouched(true);
+    if (!touched) setTouched(true);
     commitValue();
   };
 
@@ -311,6 +326,8 @@ export default function DropdownComponent(props: DropdownProps): JSX.Element {
   // Build class and attributes so parent CSS gray-out continues to work
   const disabledClass = isDisabled ? 'is-disabled' : '';
   const rootClassName = [className, disabledClass].filter(Boolean).join(' ');
+
+  if (isHidden) return <div style={{ display: 'none' }} />;
 
   return (
     <div style={{ display: isHidden ? 'none' : 'block' }}>
