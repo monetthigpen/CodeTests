@@ -5,24 +5,19 @@ import { DynamicFormContext } from './DynamicFormContext';
 
 // ----- Hard-coded people (numeric IDs) -----
 const CATALOG: Array<{ id: number; name: string; email?: string }> = [
-  { id: 101, name: 'Ada Lovelace',      email: 'ada@example.com' },
-  { id: 102, name: 'Alan Turing',       email: 'alan@example.com' },
-  { id: 103, name: 'Grace Hopper',      email: 'grace@example.com' },
-  { id: 104, name: 'Katherine Johnson', email: 'katherine@example.com' },
-  { id: 105, name: 'Donald Knuth',      email: 'donald@example.com' },
+  { id: 101, name: 'Ada Lovelace',     email: 'ada@example.com' },
+  { id: 102, name: 'Alan Turing',      email: 'alan@example.com' },
+  { id: 103, name: 'Grace Hopper',     email: 'grace@example.com' },
+  { id: 104, name: 'Katherine Johnson',email: 'katherine@example.com' },
+  { id: 105, name: 'Donald Knuth',     email: 'donald@example.com' },
 ];
 
-export interface TagPeoplePickerSimpleProps {
+export interface PeoplePickerProps {
   id: string;
   displayName: string;
-
-  /** Match combobox behavior: 'lookup' commits to `${id}Id` as numbers */
-  fieldType?: 'lookup' | string;
-
-  /** If true, only one person can be selected (combobox single-select analog) */
+  fieldType?: 'lookup' | string; // to match combobox commit behavior
   single?: boolean;
 
-  /** Pre-fill value(s) like your other components */
   starterValue?:
     | number
     | string
@@ -31,10 +26,9 @@ export interface TagPeoplePickerSimpleProps {
     | null
     | undefined;
 
-  /** Validation / UX */
   isRequired?: boolean;
   disabled?: boolean;
-  submitting?: boolean;      // when true, disables (like your combobox)
+  submitting?: boolean;
   placeholder?: string;
   className?: string;
   description?: string;
@@ -44,7 +38,6 @@ const REQUIRED_MSG = 'This is a required field and cannot be blank!';
 
 const toKey = (n: number) => String(n);
 
-// ---------- helpers: mirror your combobox starter handling ----------
 const toNum = (v: unknown): number | null => {
   const n = typeof v === 'string' ? Number(v) : (v as number);
   return Number.isFinite(n) ? Number(n) : null;
@@ -53,27 +46,27 @@ const toNum = (v: unknown): number | null => {
 function normalizeToIds(input: unknown): number[] {
   if (input == null) return [];
 
-  // REST multi: { results: [] }
-  if (typeof input === 'object' && input !== null && Array.isArray((input as { results?: unknown[] }).results)) {
-    return ((input as { results: unknown[] }).results)
+  if (
+    typeof input === 'object' &&
+    input !== null &&
+    Array.isArray((input as { results?: Array<number | string> }).results)
+  ) {
+    return ((input as { results: Array<number | string> }).results)
       .map(toNum)
       .filter((n): n is number => n !== null);
   }
 
-  // Array of values
   if (Array.isArray(input)) {
     return (input as unknown[])
       .map(toNum)
       .filter((n): n is number => n !== null);
   }
 
-  // String list "1;2,3"
   if (typeof input === 'string') {
     const parts = input.split(/[;,]/).map(s => s.trim()).filter(Boolean);
     return parts.map(toNum).filter((n): n is number => n !== null);
   }
 
-  // Scalar
   const n = toNum(input);
   return n === null ? [] : [n];
 }
@@ -81,13 +74,13 @@ function normalizeToIds(input: unknown): number[] {
 const arraysEqualTags = (a: ITag[], b: ITag[]) =>
   a.length === b.length && a.every((v, i) => v.key === b[i].key && v.name === b[i].name);
 
-export default function TagPeoplePickerSimple(props: TagPeoplePickerSimpleProps): JSX.Element {
+export default function PeoplePicker(props: PeoplePickerProps): JSX.Element {
   const {
     id,
     displayName,
     fieldType,
     single,
-    starterValue,                   // ✅ match combobox: prefill support
+    starterValue,
     isRequired: requiredProp,
     disabled: disabledProp,
     submitting,
@@ -105,32 +98,29 @@ export default function TagPeoplePickerSimple(props: TagPeoplePickerSimpleProps)
   const [error, setError] = React.useState<string>('');
   const [touched, setTouched] = React.useState<boolean>(false);
 
-  // TagPicker selection (ITag = { key: string | number; name: string })
   const [tags, setTags] = React.useState<ITag[]>([]);
   const didInitRef = React.useRef<boolean>(false);
 
-  // Error → global error (null clears)
+  // Pass undefined instead of null to GlobalErrorHandle (fixes TS2345)
   const reportError = React.useCallback(
     (msg: string): void => {
       const out = msg || '';
       if (out !== error) setError(out);
-      GlobalErrorHandle?.(id, out || null);
+      GlobalErrorHandle?.(id, out || undefined);
     },
     [GlobalErrorHandle, id, error]
   );
 
-  // Prop → state sync (like combobox)
   React.useEffect(() => {
     if (isRequired !== !!requiredProp) setIsRequired(!!requiredProp);
     if (isDisabled !== !!disabledProp) setIsDisabled(!!disabledProp);
   }, [requiredProp, disabledProp, isRequired, isDisabled]);
 
-  // Submitting disables (same pattern as combobox)
   React.useEffect(() => {
     if (submitting === true && !isDisabled) setIsDisabled(true);
   }, [submitting, isDisabled]);
 
-  // ✅ Seed from starterValue, like your combobox
+  // seed from starterValue once
   React.useEffect(() => {
     if (didInitRef.current) return;
 
@@ -160,7 +150,6 @@ export default function TagPeoplePickerSimple(props: TagPeoplePickerSimpleProps)
     didInitRef.current = true;
   }, [starterValue, single]);
 
-  // Suggestions from hard-coded catalog (kept simple)
   const onResolveSuggestions = React.useCallback(
     (filterText: string, selectedItems?: ITag[]): ITag[] => {
       const taken = new Set((selectedItems ?? []).map(t => String(t.key)));
@@ -176,7 +165,6 @@ export default function TagPeoplePickerSimple(props: TagPeoplePickerSimpleProps)
     []
   );
 
-  // Change handler (enforce single like combobox single-select)
   const onChange = (items?: ITag[]): void => {
     let next = items ?? [];
     if (single && next.length > 1) next = [next[next.length - 1]];
@@ -184,7 +172,6 @@ export default function TagPeoplePickerSimple(props: TagPeoplePickerSimpleProps)
     if (touched) reportError(isRequired && next.length === 0 ? REQUIRED_MSG : '');
   };
 
-  // Validate + commit (combobox-style commit on blur)
   const validate = React.useCallback((): string => {
     if (isRequired && tags.length === 0) return REQUIRED_MSG;
     return '';
@@ -194,14 +181,13 @@ export default function TagPeoplePickerSimple(props: TagPeoplePickerSimpleProps)
     const err = validate();
     reportError(err);
 
-    // Match combobox: lookup fields commit to `${id}Id` as numbers; otherwise to `id`
     const targetId = isLookup ? `${id}Id` : id;
     const ids = tags.map(t => Number(t.key)).filter(n => Number.isFinite(n));
 
     if (single) {
-      (GlobalFormData as (name: string, value: unknown) => void)(targetId, ids.length ? ids[0] : null);
+      (GlobalFormData as (name: string, value: unknown) => void)?.(targetId, ids.length ? ids[0] : undefined);
     } else {
-      (GlobalFormData as (name: string, value: unknown) => void)(targetId, ids);
+      (GlobalFormData as (name: string, value: unknown) => void)?.(targetId, ids);
     }
   }, [validate, reportError, tags, GlobalFormData, id, isLookup, single]);
 
@@ -236,9 +222,12 @@ export default function TagPeoplePickerSimple(props: TagPeoplePickerSimpleProps)
 }
 
 
+import PeoplePicker from './PeoplePicker';
+
+
 case "user": {
   allFormElements.push(
-    <TagPeoplePickerSimple
+    <PeoplePicker
       id={listColumns[i].name}
       displayName={listColumns[i].displayName}
       starterValue={starterVal}                  // initial value if provided
