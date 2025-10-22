@@ -1,243 +1,315 @@
-import * as React from 'react';
-import { Field } from '@fluentui/react-components';         // v9 Field for label/validation
-import { TagPicker, ITag } from '@fluentui/react';          // v8 TagPicker (chips)
-import { DynamicFormContext } from './DynamicFormContext';
+// PeoplePicker.tsx
+// React + TypeScript + Fluent UI v8 TagPicker + v9 Field
+// Works in SPFx (uses SPHttpClient if provided) or standalone (fetch + request digest)
 
-// ----- Hard-coded people (numeric IDs) -----
-const CATALOG: Array<{ id: number; name: string; email?: string }> = [
-  { id: 101, name: 'Ada Lovelace',     email: 'ada@example.com' },
-  { id: 102, name: 'Alan Turing',      email: 'alan@example.com' },
-  { id: 103, name: 'Grace Hopper',     email: 'grace@example.com' },
-  { id: 104, name: 'Katherine Johnson',email: 'katherine@example.com' },
-  { id: 105, name: 'Donald Knuth',     email: 'donald@example.com' },
-];
+import * as React from "react";
+import { Field } from "@fluentui/react-components";          // v9 for label/validation
+import { TagPicker, ITag, IBasePickerSuggestionsProps } from "@fluentui/react"; // v8
+// If you're not already bringing in v8 styles elsewhere, ensure fabric core or theme is loaded.
+
+export type PrincipalType = 0 | 1 | 2 | 4 | 8 | 15; // None | User | DL | SecGroup | SPGroup | All
+
+type PickerEntity = {
+  Key: string;               // login/email/UPN/ID depending on directory
+  DisplayText: string;       // primary display
+  Description?: string;      // usually email
+  EntityType?: string;
+  IsResolved?: boolean;
+  EntityData?: {
+    Email?: string;
+    MobilePhone?: string;
+    Title?: string;          // job title
+    Department?: string;
+    PrincipalType?: string;
+    AccountName?: string;
+  };
+};
 
 export interface PeoplePickerProps {
   id: string;
-  displayName: string;
-  fieldType?: 'lookup' | string; // to match combobox commit behavior
-  single?: boolean;
-
-  starterValue?:
-    | number
-    | string
-    | Array<number | string>
-    | { results?: Array<number | string> }
-    | null
-    | undefined;
-
+  displayName?: string;
+  placeholder?: string;
   isRequired?: boolean;
   disabled?: boolean;
-  submitting?: boolean;
-  placeholder?: string;
-  className?: string;
-  description?: string;
+  /** Single or multi-select */
+  multi?: boolean;
+
+  /** SharePoint site absolute URL, e.g. https://contoso.sharepoint.com/sites/HR */
+  webUrl: string;
+
+  /**
+   * Limit which principal types are returned.
+   * 1=User, 2=DL, 4=SecurityGroup, 8=SPGroup, 15=All. Default: 1 (User)
+   */
+  principalType?: PrincipalType;
+
+  /** Maximum suggestions to request from the API */
+  maxSuggestions?: number;
+
+  /** Initial selected people (by email/login or DisplayText). You can pass either. */
+  starterValue?: Array<{ key: string; text: string }>;
+
+  /** Called with full resolved entities (raw API results) whenever selection changes */
+  onChange?: (entities: PickerEntity[]) => void;
+
+  /** (SPFx) Pass SPHttpClient to use built-in digest/headers handling. Optional. */
+  spHttpClient?: any; // SPHttpClient
+  /** (SPFx) Config enum, typically SPHttpClient.configurations.v1. Optional. */
+  spHttpClientConfig?: any;
+
+  /** When true, allow entering emails not found (we still try resolve). Default: false */
+  allowFreeText?: boolean;
 }
 
-const REQUIRED_MSG = 'This is a required field and cannot be blank!';
+// ---- minimal in-memory digest cache (non-SPFx path) -------------------------
+type DigestCache = {
+  value: string;
+  expiresAt: number; // epoch ms
+};
+const digestCache: Record<string, DigestCache> = {};
 
-const toKey = (n: number) => String(n);
+async function getRequestDigest(webUrl: string): Promise<string> {
+  const now = Date.now();
+  const cached = digestCache[webUrl];
+  if (cached && cached.expiresAt > now + 5000) return cached.value;
 
-const toNum = (v: unknown): number | null => {
-  const n = typeof v === 'string' ? Number(v) : (v as number);
-  return Number.isFinite(n) ? Number(n) : null;
+  const resp = await fetch(`${webUrl}/_api/contextinfo`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json;odata=verbose",
+    },
+    body: "",
+    credentials: "same-origin",
+  });
+  if (!resp.ok) throw new Error(`contextinfo failed: ${resp.status}`);
+  const json = await resp.json();
+  const digest = json?.d?.GetContextWebInformation?.FormDigestValue;
+  const timeoutSec = json?.d?.GetContextWebInformation?.FormDigestTimeoutSeconds ?? 1800;
+  digestCache[webUrl] = {
+    value: digest,
+    expiresAt: now + timeoutSec * 1000,
+  };
+  return digest;
+}
+
+// ---- call ClientPeoplePickerWebServiceInterface -----------------------------
+async function searchPeopleViaREST(
+  webUrl: string,
+  query: string,
+  principalType: PrincipalType,
+  maxSuggestions: number,
+  spHttpClient?: any,
+  spHttpClientConfig?: any
+): Promise<PickerEntity[]> {
+  if (!query?.trim()) return [];
+
+  // The API expects a JSON string for "queryParams"
+  const pplPayload = {
+    __metadata: { type: "SP.UI.ApplicationPages.ClientPeoplePickerQueryParameters" },
+    QueryString: query,
+    PrincipalSource: 15,                 // All sources
+    PrincipalType: principalType ?? 1,   // Default Users only
+    AllowMultipleEntities: true,
+    MaximumEntitySuggestions: maxSuggestions || 25,
+    SharePointGroupID: 0,
+    Required: false,
+  };
+
+  const body = JSON.stringify({
+    queryParams: JSON.stringify(pplPayload),
+  });
+
+  const url = `${webUrl}/_api/SP.UI.ApplicationPages.ClientPeoplePickerWebServiceInterface.clientPeoplePickerSearchUser`;
+
+  // SPFx path: SPHttpClient manages digest & auth cookies
+  if (spHttpClient && spHttpClientConfig) {
+    const response = await spHttpClient.post(url, spHttpClientConfig, {
+      headers: {
+        Accept: "application/json;odata=verbose",
+        "Content-Type": "application/json;odata=verbose",
+        "odata-version": "3.0",
+      },
+      body,
+    });
+    if (!response.ok) throw new Error(`PeoplePicker search failed: ${response.status}`);
+    const data = await response.json();
+    const resultsStr: string = data?.d?.ClientPeoplePickerSearchUserResult ?? "[]";
+    return JSON.parse(resultsStr) as PickerEntity[];
+  }
+
+  // Non-SPFx path: use fetch + request digest
+  const digest = await getRequestDigest(webUrl);
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      Accept: "application/json;odata=verbose",
+      "Content-Type": "application/json;odata=verbose",
+      "X-RequestDigest": digest,
+      "odata-version": "3.0",
+    },
+    body,
+    credentials: "same-origin",
+  });
+  if (!resp.ok) throw new Error(`PeoplePicker search failed: ${resp.status}`);
+  const json = await resp.json();
+  const resultsStr: string = json?.d?.ClientPeoplePickerSearchUserResult ?? "[]";
+  return JSON.parse(resultsStr) as PickerEntity[];
+}
+
+// ---- tiny debounce hook -----------------------------------------------------
+function useDebouncedCallback<T extends (...args: any[]) => any>(fn: T, delay = 250) {
+  const ref = React.useRef<number>();
+  return React.useCallback(
+    (...args: Parameters<T>) =>
+      new Promise<ReturnType<T>>((resolve) => {
+        if (ref.current) window.clearTimeout(ref.current);
+        ref.current = window.setTimeout(async () => {
+          const out = await fn(...args);
+          resolve(out);
+        }, delay);
+      }),
+    [fn, delay]
+  );
+}
+
+// ---- map PickerEntity -> ITag -----------------------------------------------
+function toTag(entity: PickerEntity): ITag {
+  const key = entity.Key ?? entity.EntityData?.AccountName ?? entity.EntityData?.Email ?? entity.DisplayText;
+  const text =
+    entity.DisplayText ||
+    entity.EntityData?.Email ||
+    entity.EntityData?.AccountName ||
+    entity.Key ||
+    "Unknown";
+  return { key: key ?? text, name: text };
+}
+
+const suggestionsProps: IBasePickerSuggestionsProps = {
+  suggestionsHeaderText: "People",
+  noResultsFoundText: "No results",
+  resultsMaximumNumber: 10,
+  mostRecentlyUsedHeaderText: "",
 };
 
-function normalizeToIds(input: unknown): number[] {
-  if (input == null) return [];
+// ---- Component --------------------------------------------------------------
+export const PeoplePicker: React.FC<PeoplePickerProps> = ({
+  id,
+  displayName,
+  placeholder,
+  isRequired,
+  disabled,
+  multi = true,
+  webUrl,
+  principalType = 1,
+  maxSuggestions = 25,
+  starterValue,
+  onChange,
+  spHttpClient,
+  spHttpClientConfig,
+  allowFreeText = false,
+}) => {
+  const [selectedTags, setSelectedTags] = React.useState<ITag[]>(
+    (starterValue ?? []).map((v) => ({ key: v.key, name: v.text }))
+  );
+  const [lastResolved, setLastResolved] = React.useState<PickerEntity[]>([]);
 
-  if (
-    typeof input === 'object' &&
-    input !== null &&
-    Array.isArray((input as { results?: Array<number | string> }).results)
-  ) {
-    return ((input as { results: Array<number | string> }).results)
-      .map(toNum)
-      .filter((n): n is number => n !== null);
-  }
-
-  if (Array.isArray(input)) {
-    return (input as unknown[])
-      .map(toNum)
-      .filter((n): n is number => n !== null);
-  }
-
-  if (typeof input === 'string') {
-    const parts = input.split(/[;,]/).map(s => s.trim()).filter(Boolean);
-    return parts.map(toNum).filter((n): n is number => n !== null);
-  }
-
-  const n = toNum(input);
-  return n === null ? [] : [n];
-}
-
-const arraysEqualTags = (a: ITag[], b: ITag[]) =>
-  a.length === b.length && a.every((v, i) => v.key === b[i].key && v.name === b[i].name);
-
-export default function PeoplePicker(props: PeoplePickerProps): JSX.Element {
-  const {
-    id,
-    displayName,
-    fieldType,
-    single,
-    starterValue,
-    isRequired: requiredProp,
-    disabled: disabledProp,
-    submitting,
-    placeholder,
-    className,
-    description,
-  } = props;
-
-  const isLookup = fieldType === 'lookup';
-
-  const { GlobalFormData, GlobalErrorHandle } = React.useContext(DynamicFormContext);
-
-  const [isRequired, setIsRequired] = React.useState<boolean>(!!requiredProp);
-  const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabledProp);
-  const [error, setError] = React.useState<string>('');
-  const [touched, setTouched] = React.useState<boolean>(false);
-
-  const [tags, setTags] = React.useState<ITag[]>([]);
-  const didInitRef = React.useRef<boolean>(false);
-
-  // Pass undefined instead of null to GlobalErrorHandle (fixes TS2345)
-  const reportError = React.useCallback(
-    (msg: string): void => {
-      const out = msg || '';
-      if (out !== error) setError(out);
-      GlobalErrorHandle?.(id, out || undefined);
+  const doSearch = React.useCallback(
+    async (q: string) => {
+      const results = await searchPeopleViaREST(
+        webUrl,
+        q,
+        principalType,
+        maxSuggestions,
+        spHttpClient,
+        spHttpClientConfig
+      );
+      setLastResolved(results);
+      return results.map(toTag);
     },
-    [GlobalErrorHandle, id, error]
+    [webUrl, principalType, maxSuggestions, spHttpClient, spHttpClientConfig]
   );
 
-  React.useEffect(() => {
-    if (isRequired !== !!requiredProp) setIsRequired(!!requiredProp);
-    if (isDisabled !== !!disabledProp) setIsDisabled(!!disabledProp);
-  }, [requiredProp, disabledProp, isRequired, isDisabled]);
+  const debouncedSearch = useDebouncedCallback(doSearch, 250);
 
-  React.useEffect(() => {
-    if (submitting === true && !isDisabled) setIsDisabled(true);
-  }, [submitting, isDisabled]);
+  const handleChange = React.useCallback(
+    (items?: ITag[]) => {
+      setSelectedTags(items ?? []);
+      if (!onChange) return;
 
-  // seed from starterValue once
-  React.useEffect(() => {
-    if (didInitRef.current) return;
+      // return full entities for selected tags
+      const selectedSet = new Set((items ?? []).map((t) => String(t.key).toLowerCase()));
+      const matched: PickerEntity[] = [];
 
-    const ids = normalizeToIds(starterValue);
-    if (ids.length === 0) {
-      didInitRef.current = true;
-      return;
-    }
-
-    const byId = new Map(CATALOG.map(p => [p.id, p]));
-    const seeded: ITag[] = [];
-
-    if (single) {
-      const first = ids[0];
-      const p = first != null ? byId.get(first) : undefined;
-      if (p) seeded.push({ key: toKey(p.id), name: p.name });
-    } else {
-      for (const idNum of ids) {
-        const p = byId.get(idNum);
-        if (p) seeded.push({ key: toKey(p.id), name: p.name });
+      // match from lastResolved first
+      for (const e of lastResolved) {
+        const k =
+          (e.Key ?? e.EntityData?.AccountName ?? e.EntityData?.Email ?? e.DisplayText ?? "").toLowerCase();
+        if (selectedSet.has(k)) matched.push(e);
       }
-    }
 
-    if (seeded.length > 0) {
-      setTags(prev => (arraysEqualTags(prev, seeded) ? prev : seeded));
-    }
-    didInitRef.current = true;
-  }, [starterValue, single]);
+      // if free text allowed, synthesize entities for tags we didn’t resolve
+      if (allowFreeText) {
+        for (const t of items ?? []) {
+          const lk = String(t.key).toLowerCase();
+          if (!matched.find((m) => (m.Key ?? "").toLowerCase() === lk)) {
+            matched.push({
+              Key: String(t.key),
+              DisplayText: t.name,
+              IsResolved: false,
+              EntityData: { Email: /@/.test(String(t.key)) ? String(t.key) : undefined },
+            });
+          }
+        }
+      }
 
-  const onResolveSuggestions = React.useCallback(
-    (filterText: string, selectedItems?: ITag[]): ITag[] => {
-      const taken = new Set((selectedItems ?? []).map(t => String(t.key)));
-      const ft = filterText?.toLowerCase() ?? '';
-      return CATALOG
-        .filter(p =>
-          !taken.has(toKey(p.id)) &&
-          (!ft ||
-            p.name.toLowerCase().includes(ft) ||
-            p.email?.toLowerCase().includes(ft)))
-        .map(p => ({ key: toKey(p.id), name: p.name }));
+      onChange(matched);
     },
-    []
+    [onChange, lastResolved, allowFreeText]
   );
 
-  const onChange = (items?: ITag[]): void => {
-    let next = items ?? [];
-    if (single && next.length > 1) next = [next[next.length - 1]];
-    setTags(next);
-    if (touched) reportError(isRequired && next.length === 0 ? REQUIRED_MSG : '');
-  };
-
-  const validate = React.useCallback((): string => {
-    if (isRequired && tags.length === 0) return REQUIRED_MSG;
-    return '';
-  }, [isRequired, tags]);
-
-  const commitValue = React.useCallback((): void => {
-    const err = validate();
-    reportError(err);
-
-    const targetId = isLookup ? `${id}Id` : id;
-    const ids = tags.map(t => Number(t.key)).filter(n => Number.isFinite(n));
-
-    if (single) {
-      (GlobalFormData as (name: string, value: unknown) => void)?.(targetId, ids.length ? ids[0] : undefined);
-    } else {
-      (GlobalFormData as (name: string, value: unknown) => void)?.(targetId, ids);
-    }
-  }, [validate, reportError, tags, GlobalFormData, id, isLookup, single]);
-
-  const handleBlur = (): void => {
-    if (!touched) setTouched(true);
-    commitValue();
-  };
-
-  const hasError = !!error;
-
-  return (
-    <Field
-      label={displayName}
-      required={isRequired}
-      validationMessage={hasError ? error : undefined}
-      validationState={hasError ? 'error' : undefined}
-    >
-      <div onBlur={handleBlur} className={className}>
-        <TagPicker
-          onResolveSuggestions={onResolveSuggestions}
-          selectedItems={tags}
-          onChange={onChange}
-          inputProps={{ placeholder: placeholder || '' }}
-          itemLimit={single ? 1 : undefined}
-          disabled={isDisabled}
-        />
-      </div>
-
-      {description ? <div className="descriptionText">{description}</div> : null}
-    </Field>
-  );
-}
-
-
-import PeoplePicker from './PeoplePicker';
-
-
-case "user": {
-  allFormElements.push(
-    <PeoplePicker
-      id={listColumns[i].name}
-      displayName={listColumns[i].displayName}
-      starterValue={starterVal}                  // initial value if provided
-      isRequired={listColumns[i].required}
-      submitting={isSubmitting}                  // disables when submitting
-      single={!listColumns[i].multi}             // true if field is single-user
-      placeholder={listColumns[i].description}   // optional
-      description={listColumns[i].description}
-      className="elementsWidth"
+  const picker = (
+    <TagPicker
+      onResolveSuggestions={(filter, selectedItems) => debouncedSearch(filter || "")}
+      getTextFromItem={(tag) => tag.name}
+      selectedItems={selectedTags}
+      onChange={handleChange}
+      pickerSuggestionsProps={suggestionsProps}
+      inputProps={{ placeholder: placeholder ?? "Search people…" }}
+      itemLimit={multi ? undefined : 1}
+      disabled={disabled}
     />
   );
-  break;
-}
+
+  const requiredMsg =
+    isRequired && (selectedTags?.length ?? 0) === 0 ? "This is a required field and cannot be blank!" : undefined;
+
+  return displayName ? (
+    <Field label={displayName} validationMessage={requiredMsg} validationState={requiredMsg ? "error" : "none"}>
+      {picker}
+    </Field>
+  ) : (
+    picker
+  );
+};
+
+// ---- Example usage ----------------------------------------------------------
+/*
+<PeoplePicker
+  id="AssignedTo"
+  displayName="Assign to"
+  webUrl={this.props.context.pageContext.web.absoluteUrl}
+  multi={true}
+  principalType={1} // Users only
+  starterValue={[{ key: "ada@example.com", text: "Ada Lovelace" }]}
+  onChange={(entities) => {
+    // For "people" fields in SharePoint list items, send numeric IDs if you have them,
+    // otherwise set by "Claims" or "Key". For example, map to:
+    // const valueForSharePoint = entities.map(e => ({ Key: e.Key }));
+    console.log("Selected entities:", entities);
+  }}
+  // SPFx (optional, recommended inside SPFx):
+  spHttpClient={this.props.context.spHttpClient}
+  spHttpClientConfig={SPHttpClient.configurations.v1}
+/>
+*/
+
