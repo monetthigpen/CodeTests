@@ -361,3 +361,15 @@ Usage (non-SPFx, modern/classic page):
 <PeoplePicker id="Ppl" webUrl="https://contoso.sharepoint.com/sites/HR" />
 */
 
+<PeoplePicker
+  id={listColumns[i].name}
+  displayName={listColumns[i].displayName}
+  starterValue={starterVal}
+  isRequired={listColumns[i].required}
+  submitting={isSubmitting}
+  single={!listColumns[i].multi}
+  placeholder={listColumns[i].description}
+  description={listColumns[i].description}
+  className="elementsWidth"
+/>
+
