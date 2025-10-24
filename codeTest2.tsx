@@ -1,9 +1,35 @@
+// PeoplePicker.tsx
 import * as React from "react";
 import { Field } from "@fluentui/react-components";
 import { TagPicker, ITag, IBasePickerSuggestionsProps } from "@fluentui/react";
 
 // ----------------------------------------------------
-// Types for SharePoint People Picker
+//  Helper: detect SharePoint site URL
+// ----------------------------------------------------
+function resolveWebUrl(explicit?: string): string | undefined {
+  if (explicit) return explicit;
+
+  const spUrl = (window as any)?._spPageContextInfo?.webAbsoluteUrl;
+  if (typeof spUrl === "string" && spUrl) return spUrl;
+
+  try {
+    // Adjust path depth as needed depending on your folder structure
+    // For example, "../../../config/serve.json" if your component is under src/components/
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const serve = require("../../../config/serve.json");
+    const initial = serve?.initialPage as string | undefined;
+    if (initial && initial.includes("/_layouts/")) {
+      return initial.split("/_layouts/")[0];
+    }
+    if (initial) return initial.replace(/\/$/, "");
+  } catch {
+    // ignore when not found in production bundle
+  }
+  return undefined;
+}
+
+// ----------------------------------------------------
+// Types for PeoplePicker
 // ----------------------------------------------------
 export type PrincipalType = 0 | 1 | 2 | 4 | 8 | 15;
 
@@ -22,21 +48,16 @@ export interface PickerEntity {
 }
 
 export interface PeoplePickerProps {
-  id: string;
   displayName?: string;
-  className?: string;
   description?: string;
   placeholder?: string;
-
+  className?: string;
   isRequired?: boolean;
   submitting?: boolean;
   single?: boolean;
   disabled?: boolean;
-
   starterValue?: { key: string; text: string } | { key: string; text: string }[];
-
   onChange?: (entities: PickerEntity[]) => void;
-
   webUrl?: string;
   principalType?: PrincipalType;
   maxSuggestions?: number;
@@ -46,7 +67,7 @@ export interface PeoplePickerProps {
 }
 
 // ----------------------------------------------------
-// Request Digest (non-SPFx fallback)
+// Minimal digest cache (non-SPFx)
 // ----------------------------------------------------
 type DigestCache = { value: string; expiresAt: number };
 const digestCache: Record<string, DigestCache> = {};
@@ -69,7 +90,7 @@ async function getRequestDigest(webUrl: string): Promise<string> {
 }
 
 // ----------------------------------------------------
-// Call SharePoint ClientPeoplePickerWebServiceInterface
+// Call SP ClientPeoplePickerWebServiceInterface
 // ----------------------------------------------------
 async function searchPeopleViaREST(
   webUrl: string,
@@ -120,7 +141,7 @@ async function searchPeopleViaREST(
 }
 
 // ----------------------------------------------------
-// Async debounce (no nested Promises)
+// Debounce helper
 // ----------------------------------------------------
 function useDebouncedAsync<TArgs extends any[], TResult>(
   fn: (...args: TArgs) => Promise<TResult>,
@@ -166,7 +187,7 @@ const PeoplePickerInner: React.FC<PeoplePickerProps> = (props) => {
     disabled,
     starterValue,
     onChange,
-    webUrl: webUrlProp,
+    webUrl: explicitUrl,
     principalType = 1,
     maxSuggestions = 25,
     spHttpClient,
@@ -174,10 +195,7 @@ const PeoplePickerInner: React.FC<PeoplePickerProps> = (props) => {
     allowFreeText = false,
   } = props;
 
-  const webUrl =
-    webUrlProp ||
-    (typeof window !== "undefined" &&
-      (window as any)._spPageContextInfo?.webAbsoluteUrl);
+  const webUrl = resolveWebUrl(explicitUrl);
 
   const starterArray = Array.isArray(starterValue)
     ? starterValue
@@ -294,17 +312,3 @@ const PeoplePickerInner: React.FC<PeoplePickerProps> = (props) => {
 // ----------------------------------------------------
 export const PeoplePicker = React.memo(PeoplePickerInner);
 export default PeoplePicker;
-
-
-<PeoplePicker
-  id={listColumns[i].name}
-  displayName={listColumns[i].displayName}
-  starterValue={starterVal}
-  isRequired={listColumns[i].required}
-  submitting={isSubmitting}
-  single={!listColumns[i].multi}
-  placeholder={listColumns[i].description}
-  description={listColumns[i].description}
-  className="elementsWidth"
-/>
-
