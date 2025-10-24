@@ -1,22 +1,19 @@
-// PeoplePicker.tsx
-// React + TypeScript + Fluent UI (v9 Field + v8 TagPicker)
-// - Multi or single select
-// - Starter values
-// - Uses SP Client People Picker Web Service
-// - SPFx or non-SPFx (auto-digest) compatible
-
 import * as React from "react";
-import { Field } from "@fluentui/react-components";
-import { TagPicker, ITag, IBasePickerSuggestionsProps } from "@fluentui/react";
+import { Field } from "@fluentui/react-components"; // v9
+import { TagPicker, ITag, IBasePickerSuggestionsProps } from "@fluentui/react"; // v8
 
-// Principal types per SP: 1=User, 2=DL, 4=SecGroup, 8=SPGroup, 15=All
+// If you WILL pass SPHttpClient from SPFx usage, import the type (optional):
+// import { SPHttpClient } from "@microsoft/sp-http";
+
+// -----------------------------
+// Types from SP People Picker
+// -----------------------------
 export type PrincipalType = 0 | 1 | 2 | 4 | 8 | 15;
 
-// Shape returned by ClientPeoplePickerWebServiceInterface
 export type PickerEntity = {
-  Key: string;               // UPN / email / claims key
+  Key: string;               // Claims/UPN/email
   DisplayText: string;
-  Description?: string;      // usually email
+  Description?: string;
   EntityType?: string;
   IsResolved?: boolean;
   EntityData?: {
@@ -25,46 +22,54 @@ export type PickerEntity = {
     Title?: string;
     Department?: string;
     PrincipalType?: string;
-    AccountName?: string;    // i:0#.f|membership|user@contoso.com
+    AccountName?: string;    // e.g., i:0#.f|membership|user@contoso.com
   };
 };
 
+type StarterItem = { key: string; text: string };
+
+// -----------------------------
+// Props (matches your call-site)
+// -----------------------------
 export interface PeoplePickerProps {
   id: string;
   displayName?: string;
+  className?: string;
+  description?: string;
   placeholder?: string;
+
+  // your booleans
   isRequired?: boolean;
-  disabled?: boolean;
+  submitting?: boolean;
+  single?: boolean; // if true => single select; if false/undefined => multi
 
-  /** Set false for single-select; true is default */
-  multi?: boolean;
+  // initial selection
+  starterValue?: StarterItem | StarterItem[];
 
-  /** Absolute site URL (e.g., https://contoso.sharepoint.com/sites/HR) */
-  webUrl: string;
-
-  /** 1=User (default), 15=All, etc. */
-  principalType?: PrincipalType;
-
-  /** Max number of suggestions the API should return */
-  maxSuggestions?: number;
-
-  /** Optional initial selection */
-  starterValue?: Array<{ key: string; text: string }>;
-
-  /** Emits raw People Picker entities whenever selection changes */
+  // optional overrides / integration
   onChange?: (entities: PickerEntity[]) => void;
 
-  /** Optional SPFx client + config to use SPHttpClient (digest handled for you) */
+  // SharePoint setup
+  /** If omitted, we try window._spPageContextInfo.webAbsoluteUrl */
+  webUrl?: string;
+
+  /** Narrow results: 1=User (default), 15=All */
+  principalType?: PrincipalType;
+
+  /** Suggestion count (default 25) */
+  maxSuggestions?: number;
+
+  /** (Optional SPFx) Pass SPHttpClient + config to skip manual digest fetch */
   spHttpClient?: any;        // SPHttpClient
   spHttpClientConfig?: any;  // SPHttpClient.configurations.v1
 
-  /** Allow free-text tags not resolved by SP (default false) */
+  /** Allow unresolved free-text entries (default false) */
   allowFreeText?: boolean;
 }
 
-/* ------------------------------------------------
-   Minimal request-digest cache for non-SPFx usage
--------------------------------------------------*/
+// -----------------------------
+// Minimal digest cache (non-SPFx)
+// -----------------------------
 type DigestCache = { value: string; expiresAt: number };
 const digestCache: Record<string, DigestCache> = {};
 
@@ -89,9 +94,9 @@ async function getRequestDigest(webUrl: string): Promise<string> {
   return digest;
 }
 
-/* ------------------------------------------------
-   Call SP Client People Picker Web Service
--------------------------------------------------*/
+// -----------------------------
+// Call SP Client People Picker
+// -----------------------------
 async function searchPeopleViaREST(
   webUrl: string,
   query: string,
@@ -102,7 +107,6 @@ async function searchPeopleViaREST(
 ): Promise<PickerEntity[]> {
   if (!query?.trim()) return [];
 
-  // Payload must be JSON-stringified in "queryParams"
   const pplPayload = {
     __metadata: { type: "SP.UI.ApplicationPages.ClientPeoplePickerQueryParameters" },
     QueryString: query,
@@ -117,7 +121,6 @@ async function searchPeopleViaREST(
   const body = JSON.stringify({ queryParams: JSON.stringify(pplPayload) });
   const url = `${webUrl}/_api/SP.UI.ApplicationPages.ClientPeoplePickerWebServiceInterface.clientPeoplePickerSearchUser`;
 
-  // SPFx path (SPHttpClient handles digest)
   if (spHttpClient && spHttpClientConfig) {
     const response = await spHttpClient.post(url, spHttpClientConfig, {
       headers: {
@@ -133,7 +136,6 @@ async function searchPeopleViaREST(
     return JSON.parse(resultsStr) as PickerEntity[];
   }
 
-  // Non-SPFx path (manual digest)
   const digest = await getRequestDigest(webUrl);
   const resp = await fetch(url, {
     method: "POST",
@@ -152,10 +154,9 @@ async function searchPeopleViaREST(
   return JSON.parse(resultsStr) as PickerEntity[];
 }
 
-/* ------------------------------------------------
-   Debounce helper for async functions
-   Returns Promise<TResult> (no nested Promise)
--------------------------------------------------*/
+// -----------------------------
+// Debounced async helper
+// -----------------------------
 function useDebouncedAsync<TArgs extends any[], TResult>(
   fn: (...args: TArgs) => Promise<TResult>,
   delay = 250
@@ -174,9 +175,9 @@ function useDebouncedAsync<TArgs extends any[], TResult>(
   );
 }
 
-/* ------------------------------------------------
-   Helpers
--------------------------------------------------*/
+// -----------------------------
+// Small helpers
+// -----------------------------
 function toTag(entity: PickerEntity): ITag {
   const key =
     entity.Key ||
@@ -199,33 +200,56 @@ const suggestionsProps: IBasePickerSuggestionsProps = {
   mostRecentlyUsedHeaderText: "",
 };
 
-/* ------------------------------------------------
-   Component
--------------------------------------------------*/
-export const PeoplePicker: React.FC<PeoplePickerProps> = ({
-  id,
-  displayName,
-  placeholder,
-  isRequired,
-  disabled,
-  multi = true,
-  webUrl,
-  principalType = 1,
-  maxSuggestions = 25,
-  starterValue,
-  onChange,
-  spHttpClient,
-  spHttpClientConfig,
-  allowFreeText = false,
-}) => {
+// -----------------------------
+// Component
+// -----------------------------
+export const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
+  const {
+    id,
+    displayName,
+    className,
+    description,
+    placeholder,
+    isRequired,
+    submitting,
+    single,
+    starterValue,
+    onChange,
+    webUrl: webUrlProp,
+    principalType = 1,
+    maxSuggestions = 25,
+    spHttpClient,
+    spHttpClientConfig,
+    allowFreeText = false,
+  } = props;
+
+  // Resolve webUrl fallback (works on classic/modern/SPFx pages)
+  const webUrl =
+    webUrlProp ||
+    (typeof window !== "undefined" &&
+      (window as any)._spPageContextInfo?.webAbsoluteUrl);
+
+  if (!webUrl) {
+    // Soft warning – still render, but searches will fail until webUrl is provided.
+    // You can throw here if you prefer hard failure:
+    // throw new Error("PeoplePicker requires webUrl or _spPageContextInfo.webAbsoluteUrl.");
+  }
+
+  // Normalize starterValue to array of ITag
+  const starterArray: StarterItem[] = Array.isArray(starterValue)
+    ? starterValue
+    : starterValue
+    ? [starterValue]
+    : [];
+
   const [selectedTags, setSelectedTags] = React.useState<ITag[]>(
-    (starterValue ?? []).map((v) => ({ key: v.key, name: v.text }))
+    starterArray.map((v) => ({ key: v.key, name: v.text }))
   );
   const [lastResolved, setLastResolved] = React.useState<PickerEntity[]>([]);
 
   const doSearch = React.useCallback(
     async (q: string): Promise<ITag[]> => {
-      if (!q?.trim()) return [];
+      if (!q?.trim() || !webUrl) return [];
       const results = await searchPeopleViaREST(
         webUrl,
         q,
@@ -249,11 +273,9 @@ export const PeoplePicker: React.FC<PeoplePickerProps> = ({
 
       if (!onChange) return;
 
-      // Build set of selected keys for quick match
       const selectedKeys = new Set(next.map((t) => String(t.key).toLowerCase()));
       const matched: PickerEntity[] = [];
 
-      // Prefer entities from the last search batch
       for (const e of lastResolved) {
         const k =
           (e.Key ??
@@ -264,7 +286,6 @@ export const PeoplePicker: React.FC<PeoplePickerProps> = ({
         if (selectedKeys.has(k)) matched.push(e);
       }
 
-      // Synthesize for any free-text tags not resolved
       if (allowFreeText) {
         for (const t of next) {
           const lk = String(t.key).toLowerCase();
@@ -289,77 +310,44 @@ export const PeoplePicker: React.FC<PeoplePickerProps> = ({
       ? "This is a required field and cannot be blank!"
       : undefined;
 
-  return (
-    <>
-      {displayName ? (
-        <Field
-          label={displayName}
-          validationMessage={requiredMsg}
-          validationState={requiredMsg ? "error" : "none"}
-        >
-          <TagPicker
-            onResolveSuggestions={(filter, selected) =>
-              debouncedSearch(filter || "").then((tags) =>
-                tags.filter(
-                  (t) => !(selected ?? []).some((s) => String(s.key) === String(t.key))
-                )
-              )
-            }
-            getTextFromItem={(t) => t.name}
-            selectedItems={selectedTags}
-            onChange={handleChange}
-            pickerSuggestionsProps={suggestionsProps}
-            inputProps={{ placeholder: placeholder ?? "Search people…" }}
-            itemLimit={multi ? undefined : 1}
-            disabled={disabled}
-          />
-        </Field>
-      ) : (
-        <TagPicker
-          onResolveSuggestions={(filter, selected) =>
-            debouncedSearch(filter || "").then((tags) =>
-              tags.filter(
-                (t) => !(selected ?? []).some((s) => String(s.key) === String(t.key))
-              )
-            )
-          }
-          getTextFromItem={(t) => t.name}
-          selectedItems={selectedTags}
-          onChange={handleChange}
-          pickerSuggestionsProps={suggestionsProps}
-          inputProps={{ placeholder: placeholder ?? "Search people…" }}
-          itemLimit={multi ? undefined : 1}
-          disabled={disabled}
-        />
-      )}
-    </>
+  const itemLimit = single ? 1 : undefined;
+  const isDisabled = !!submitting || props["disabled"] === true;
+
+  const picker = (
+    <TagPicker
+      className={className}
+      onResolveSuggestions={(filter, selected) =>
+        debouncedSearch(filter || "").then((tags) =>
+          tags.filter(
+            (t) => !(selected ?? []).some((s) => String(s.key) === String(t.key))
+          )
+        )
+      }
+      getTextFromItem={(t) => t.name}
+      selectedItems={selectedTags}
+      onChange={handleChange}
+      pickerSuggestionsProps={suggestionsProps}
+      inputProps={{ placeholder: placeholder ?? "Search people…" }}
+      itemLimit={itemLimit}
+      disabled={isDisabled}
+    />
+  );
+
+  return displayName ? (
+    <Field
+      label={displayName}
+      hint={description}
+      validationMessage={requiredMsg}
+      validationState={requiredMsg ? "error" : "none"}
+    >
+      {picker}
+    </Field>
+  ) : (
+    picker
   );
 };
 
 export default PeoplePicker;
-
-/*
-Usage (SPFx):
-
-<PeoplePicker
-  id="AssignedTo"
-  displayName="Assign to"
-  webUrl={this.props.context.pageContext.web.absoluteUrl}
-  multi={true}                 // or false for single
-  principalType={1}            // 1=Users only, 15=All
-  starterValue={[{ key: "ada@example.com", text: "Ada Lovelace" }]}
-  spHttpClient={this.props.context.spHttpClient}
-  spHttpClientConfig={SPHttpClient.configurations.v1}
-  onChange={(entities) => {
-    // Map to what your list expects, e.g. claims Keys:
-    // const value = entities.map(e => ({ Key: e.Key }));
-    console.log("Selected:", entities);
-  }}
-/>
-
-Usage (non-SPFx, modern/classic page):
-<PeoplePicker id="Ppl" webUrl="https://contoso.sharepoint.com/sites/HR" />
-*/
 
 <PeoplePicker
   id={listColumns[i].name}
