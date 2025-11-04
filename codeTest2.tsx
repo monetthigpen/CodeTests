@@ -84,8 +84,8 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
   // Normalize required field
   const requiredEffective = (isRequired ?? isrequired) ?? false;
 
-  // 🔹 Explicit SharePoint Site URL
-  const webUrl = "https://amerihealthcaritas.sharepoint.com/sites/eokm";
+  // Explicit SharePoint Site URL
+  const webUrl = "https://";
   const apiUrl = `${webUrl}/_api/SP.UI.ApplicationPages.ClientPeoplePickerWebServiceInterface.clientPeoplePickerSearchUser`;
 
   const starterArray = Array.isArray(starterValue)
