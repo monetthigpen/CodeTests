@@ -1,37 +1,6 @@
-// PeoplePicker.tsx
 import * as React from "react";
 import { Field } from "@fluentui/react-components";
 import { TagPicker, ITag, IBasePickerSuggestionsProps } from "@fluentui/react";
-
-// ----------------------------------------------------
-//  Helper: detect SharePoint site URL
-// ----------------------------------------------------
-function resolveWebUrl(explicit?: string): string | undefined {
-  if (explicit) return explicit;
-
-  const spUrl = (window as any)?._spPageContextInfo?.webAbsoluteUrl;
-  if (typeof spUrl === "string" && spUrl) return spUrl;
-
-  try {
-    // Adjust path depth as needed depending on your folder structure
-    // For example, "../../../config/serve.json" if your component is under src/components/
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const serve = require("../../../config/serve.json");
-    const initial = serve?.initialPage as string | undefined;
-    if (initial && initial.includes("/_layouts/")) {
-      return initial.split("/_layouts/")[0];
-    }
-    if (initial) return initial.replace(/\/$/, "");
-  } catch {
-    // ignore when not found in production bundle
-  }
-  return undefined;
-}
-
-// ----------------------------------------------------
-// Types for PeoplePicker
-// ----------------------------------------------------
-export type PrincipalType = 0 | 1 | 2 | 4 | 8 | 15;
 
 export interface PickerEntity {
   Key: string;
@@ -48,135 +17,34 @@ export interface PickerEntity {
 }
 
 export interface PeoplePickerProps {
+  id?: string;
   displayName?: string;
+  className?: string;
   description?: string;
   placeholder?: string;
-  className?: string;
   isRequired?: boolean;
   submitting?: boolean;
   single?: boolean;
-  disabled?: boolean;
   starterValue?: { key: string; text: string } | { key: string; text: string }[];
   onChange?: (entities: PickerEntity[]) => void;
-  webUrl?: string;
-  principalType?: PrincipalType;
-  maxSuggestions?: number;
   spHttpClient?: any;
   spHttpClientConfig?: any;
-  allowFreeText?: boolean;
 }
 
-// ----------------------------------------------------
-// Minimal digest cache (non-SPFx)
-// ----------------------------------------------------
-type DigestCache = { value: string; expiresAt: number };
-const digestCache: Record<string, DigestCache> = {};
-
-async function getRequestDigest(webUrl: string): Promise<string> {
-  const now = Date.now();
-  const cached = digestCache[webUrl];
-  if (cached && cached.expiresAt > now + 5000) return cached.value;
-
-  const resp = await fetch(`${webUrl}/_api/contextinfo`, {
-    method: "POST",
-    headers: { Accept: "application/json;odata=verbose" },
-    credentials: "same-origin",
-  });
-  const json = await resp.json();
-  const digest = json?.d?.GetContextWebInformation?.FormDigestValue;
-  const timeout = json?.d?.GetContextWebInformation?.FormDigestTimeoutSeconds ?? 1800;
-  digestCache[webUrl] = { value: digest, expiresAt: now + timeout * 1000 };
-  return digest;
-}
-
-// ----------------------------------------------------
-// Call SP ClientPeoplePickerWebServiceInterface
-// ----------------------------------------------------
-async function searchPeopleViaREST(
-  webUrl: string,
-  query: string,
-  principalType: PrincipalType,
-  maxSuggestions: number,
-  spHttpClient?: any,
-  spHttpClientConfig?: any
-): Promise<PickerEntity[]> {
-  if (!query?.trim()) return [];
-
-  const payload = {
-    __metadata: { type: "SP.UI.ApplicationPages.ClientPeoplePickerQueryParameters" },
-    QueryString: query,
-    PrincipalSource: 15,
-    PrincipalType: principalType ?? 1,
-    AllowMultipleEntities: true,
-    MaximumEntitySuggestions: maxSuggestions || 25,
-  };
-  const body = JSON.stringify({ queryParams: JSON.stringify(payload) });
-  const url = `${webUrl}/_api/SP.UI.ApplicationPages.ClientPeoplePickerWebServiceInterface.clientPeoplePickerSearchUser`;
-
-  if (spHttpClient && spHttpClientConfig) {
-    const resp = await spHttpClient.post(url, spHttpClientConfig, {
-      headers: {
-        Accept: "application/json;odata=verbose",
-        "Content-Type": "application/json;odata=verbose",
-      },
-      body,
-    });
-    const data = await resp.json();
-    return JSON.parse(data?.d?.ClientPeoplePickerSearchUserResult ?? "[]");
-  }
-
-  const digest = await getRequestDigest(webUrl);
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: {
-      Accept: "application/json;odata=verbose",
-      "Content-Type": "application/json;odata=verbose",
-      "X-RequestDigest": digest,
-    },
-    body,
-    credentials: "same-origin",
-  });
-  const json = await resp.json();
-  return JSON.parse(json?.d?.ClientPeoplePickerSearchUserResult ?? "[]");
-}
-
-// ----------------------------------------------------
-// Debounce helper
-// ----------------------------------------------------
-function useDebouncedAsync<TArgs extends any[], TResult>(
-  fn: (...args: TArgs) => Promise<TResult>,
-  delay = 250
-) {
-  const timer = React.useRef<number>();
-  return React.useCallback(
-    (...args: TArgs): Promise<TResult> =>
-      new Promise((resolve) => {
-        if (timer.current) clearTimeout(timer.current);
-        timer.current = window.setTimeout(async () => resolve(await fn(...args)), delay);
-      }),
-    [fn, delay]
-  );
-}
-
-// ----------------------------------------------------
-// Utility: map entity → ITag
-// ----------------------------------------------------
 const toTag = (e: PickerEntity): ITag => ({
-  key: e.Key || e.EntityData?.AccountName || e.EntityData?.Email || e.DisplayText,
+  key: e.Key || e.EntityData?.AccountName || e.DisplayText,
   name: e.DisplayText || e.EntityData?.Email || e.Key,
 });
 
 const suggestionsProps: IBasePickerSuggestionsProps = {
   suggestionsHeaderText: "People",
-  noResultsFoundText: "No results",
+  noResultsFoundText: "No results found",
   resultsMaximumNumber: 10,
 };
 
-// ----------------------------------------------------
-// Component
-// ----------------------------------------------------
-const PeoplePickerInner: React.FC<PeoplePickerProps> = (props) => {
+export const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
   const {
+    id: _id,
     displayName,
     className,
     description,
@@ -184,18 +52,15 @@ const PeoplePickerInner: React.FC<PeoplePickerProps> = (props) => {
     isRequired,
     submitting,
     single,
-    disabled,
     starterValue,
     onChange,
-    webUrl: explicitUrl,
-    principalType = 1,
-    maxSuggestions = 25,
     spHttpClient,
     spHttpClientConfig,
-    allowFreeText = false,
   } = props;
 
-  const webUrl = resolveWebUrl(explicitUrl);
+  // 🔹 HARD-CODE YOUR EXPLICIT URL HERE
+  const webUrl = "https://yourtenant.sharepoint.com/sites/yoursite"; // <--- CHANGE THIS LINE
+  const apiUrl = `${webUrl}/_api/SP.UI.ApplicationPages.ClientPeoplePickerWebServiceInterface.clientPeoplePickerSearchUser`;
 
   const starterArray = Array.isArray(starterValue)
     ? starterValue
@@ -206,109 +71,107 @@ const PeoplePickerInner: React.FC<PeoplePickerProps> = (props) => {
   const [selectedTags, setSelectedTags] = React.useState<ITag[]>(
     starterArray.map((v) => ({ key: v.key, name: v.text }))
   );
-  const [lastResolved, setLastResolved] = React.useState<PickerEntity[]>([]);
 
-  const doSearch = React.useCallback(
-    async (q: string): Promise<ITag[]> => {
-      if (!q?.trim() || !webUrl) return [];
-      const results = await searchPeopleViaREST(
-        webUrl,
-        q,
-        principalType,
-        maxSuggestions,
-        spHttpClient,
-        spHttpClientConfig
-      );
-      setLastResolved(results);
-      return results.map(toTag);
-    },
-    [webUrl, principalType, maxSuggestions, spHttpClient, spHttpClientConfig]
-  );
+  const searchPeople = async (query: string): Promise<ITag[]> => {
+    if (!query.trim()) return [];
 
-  const debouncedSearch = useDebouncedAsync(doSearch, 250);
+    const payload = {
+      __metadata: { type: "SP.UI.ApplicationPages.ClientPeoplePickerQueryParameters" },
+      QueryString: query,
+      PrincipalSource: 15,
+      PrincipalType: 15,
+      AllowMultipleEntities: true,
+      MaximumEntitySuggestions: 25,
+      SharePointGroupID: 0,
+    };
 
-  const handleChange = React.useCallback(
-    (items?: ITag[]) => {
-      const next = items ?? [];
-      setSelectedTags(next);
-      if (!onChange) return;
+    const body = JSON.stringify({ queryParams: JSON.stringify(payload) });
 
-      const selectedKeys = new Set(next.map((t) => String(t.key).toLowerCase()));
-      const matched: PickerEntity[] = [];
+    try {
+      if (spHttpClient && spHttpClientConfig) {
+        const resp = await spHttpClient.post(apiUrl, spHttpClientConfig, {
+          headers: {
+            Accept: "application/json;odata=verbose",
+            "Content-Type": "application/json;odata=verbose",
+            "odata-version": "3.0",
+          },
+          body,
+        });
 
-      for (const e of lastResolved) {
-        const key =
-          (e.Key ??
-            e.EntityData?.AccountName ??
-            e.EntityData?.Email ??
-            e.DisplayText ??
-            "").toLowerCase();
-        if (selectedKeys.has(key)) matched.push(e);
-      }
-
-      if (allowFreeText) {
-        for (const t of next) {
-          const key = String(t.key).toLowerCase();
-          if (!matched.find((m) => (m.Key ?? "").toLowerCase() === key)) {
-            matched.push({
-              Key: String(t.key),
-              DisplayText: t.name,
-              IsResolved: false,
-              EntityData: { Email: /@/.test(String(t.key)) ? String(t.key) : undefined },
-            });
-          }
+        if (!resp.ok) {
+          const text = await resp.text().catch(() => "");
+          console.error("People Picker Error:", resp.status, resp.statusText, text);
+          return [];
         }
+
+        const data = await resp.json();
+        const raw = data?.d?.ClientPeoplePickerSearchUserResult ?? "[]";
+        const entities = JSON.parse(raw);
+        return entities.map(toTag);
       }
 
-      onChange(matched);
-    },
-    [onChange, lastResolved, allowFreeText]
-  );
+      // fallback if spHttpClient isn't used
+      const digest =
+        (document.getElementById("__REQUESTDIGEST") as HTMLInputElement)?.value || "";
+
+      const resp = await fetch(apiUrl, {
+        method: "POST",
+        headers: {
+          Accept: "application/json;odata=verbose",
+          "Content-Type": "application/json;odata=verbose",
+          "X-RequestDigest": digest,
+          "odata-version": "3.0",
+        },
+        body,
+        credentials: "same-origin",
+      });
+
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => "");
+        console.error("Fetch Error:", resp.status, resp.statusText, text);
+        return [];
+      }
+
+      const json = await resp.json();
+      const raw = json?.d?.ClientPeoplePickerSearchUserResult ?? "[]";
+      const entities = JSON.parse(raw);
+      return entities.map(toTag);
+    } catch (e) {
+      console.error("People Picker Exception:", e);
+      return [];
+    }
+  };
+
+  const handleChange = (items?: ITag[]) => {
+    setSelectedTags(items ?? []);
+    if (onChange) {
+      onChange(items as any);
+    }
+  };
 
   const requiredMsg =
-    isRequired && selectedTags.length === 0
-      ? "This field is required."
-      : undefined;
+    isRequired && selectedTags.length === 0 ? "This field is required." : undefined;
 
-  const isDisabled = Boolean(submitting || disabled);
-  const itemLimit = single ? 1 : undefined;
-
-  const picker = (
-    <TagPicker
-      className={className}
-      disabled={isDisabled}
-      itemLimit={itemLimit}
-      onResolveSuggestions={(filter, selected) =>
-        debouncedSearch(filter || "").then((tags) =>
-          tags.filter(
-            (t) => !(selected ?? []).some((s) => String(s.key) === String(t.key))
-          )
-        )
-      }
-      getTextFromItem={(t) => t.name}
-      selectedItems={selectedTags}
-      onChange={handleChange}
-      pickerSuggestionsProps={suggestionsProps}
-      inputProps={{ placeholder: placeholder ?? "Search people…" }}
-    />
-  );
-
-  return displayName ? (
+  return (
     <Field
       label={displayName}
       hint={description}
       validationMessage={requiredMsg}
       validationState={requiredMsg ? "error" : "none"}
     >
-      {picker}
+      <TagPicker
+        className={className}
+        disabled={submitting}
+        itemLimit={single ? 1 : undefined}
+        onResolveSuggestions={(filter) => searchPeople(filter || "")}
+        getTextFromItem={(item) => item.name}
+        selectedItems={selectedTags}
+        onChange={handleChange}
+        pickerSuggestionsProps={suggestionsProps}
+        inputProps={{ placeholder: placeholder ?? "Search people…" }}
+      />
     </Field>
-  ) : (
-    picker
   );
 };
 
-// ----------------------------------------------------
-// Memoized Export
-// ----------------------------------------------------
-export const PeoplePicker = React.memo(PeoplePickerInner);
 export default PeoplePicker;
