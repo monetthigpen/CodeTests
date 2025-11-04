@@ -25,27 +25,19 @@ export interface PeoplePickerProps {
   className?: string;
   description?: string;
   placeholder?: string;
-
-  // canonical props
   isRequired?: boolean;
+  isrequired?: boolean;
   submitting?: boolean;
   single?: boolean;
   disabled?: boolean;
   starterValue?: { key: string; text: string } | { key: string; text: string }[];
   onChange?: (entities: PickerEntity[]) => void;
-
-  // SPFx (optional)
   spHttpClient?: any;
   spHttpClientConfig?: any;
-
-  // tolerated extras from builder
-  isrequired?: boolean;
-  dateTimeFormat?: string;
-
-  // optional tuning
   principalType?: PrincipalType;
   maxSuggestions?: number;
   allowFreeText?: boolean;
+  [key: string]: any; // tolerate unknown props from builder
 }
 
 const toTag = (e: PickerEntity): ITag => ({
@@ -78,13 +70,11 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
     principalType = 1,
     maxSuggestions = 25,
     allowFreeText = false,
-    dateTimeFormat: _dateTimeFormat, // accepted but unused
   } = props;
 
-  // Normalize required field
   const requiredEffective = (isRequired ?? isrequired) ?? false;
 
-  // Explicit SharePoint Site URL
+  // Explicit SharePoint URL
   const webUrl = "https://";
   const apiUrl = `${webUrl}/_api/SP.UI.ApplicationPages.ClientPeoplePickerWebServiceInterface.clientPeoplePickerSearchUser`;
 
@@ -97,8 +87,10 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
   const [selectedTags, setSelectedTags] = React.useState<ITag[]>(
     starterArray.map((v) => ({ key: v.key, name: v.text }))
   );
+
   const [lastResolved, setLastResolved] = React.useState<PickerEntity[]>([]);
 
+  // 🔍 Search SharePoint people picker
   const searchPeople = React.useCallback(
     async (query: string): Promise<ITag[]> => {
       if (!query.trim()) return [];
@@ -107,7 +99,7 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
         __metadata: { type: "SP.UI.ApplicationPages.ClientPeoplePickerQueryParameters" },
         QueryString: query,
         PrincipalSource: 15,
-        PrincipalType: 15,
+        PrincipalType: principalType,
         AllowMultipleEntities: true,
         MaximumEntitySuggestions: maxSuggestions,
         SharePointGroupID: 0,
@@ -139,7 +131,7 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
           return entities.map(toTag);
         }
 
-        // fallback (non-SPFx path)
+        // fallback fetch
         const digest =
           (document.getElementById("__REQUESTDIGEST") as HTMLInputElement)?.value || "";
         const resp = await fetch(apiUrl, {
@@ -170,7 +162,7 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
         return [];
       }
     },
-    [apiUrl, maxSuggestions, spHttpClient, spHttpClientConfig]
+    [apiUrl, maxSuggestions, principalType, spHttpClient, spHttpClientConfig]
   );
 
   const handleChange = React.useCallback(
@@ -253,6 +245,8 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
   );
 };
 
+
 export default PeoplePicker;
+
 
 
