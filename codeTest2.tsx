@@ -1,7 +1,9 @@
 // PeoplePickerComponent.tsx
 import * as React from "react";
-import { Field } from "@fluentui/react-components";
-import { TagPicker, ITag, IBasePickerSuggestionsProps } from "@fluentui/react";
+import { Field } from "@fluentui/react-components";          // v9
+import { TagPicker, ITag, IBasePickerSuggestionsProps } from "@fluentui/react"; // v8
+
+/* ---------------------------------- Types --------------------------------- */
 
 export type PrincipalType = 0 | 1 | 2 | 4 | 8 | 15;
 
@@ -9,13 +11,13 @@ export interface PickerEntity {
   Key: string;
   DisplayText?: string;
   EntityType?: string;
-  EntityType2?: string;
+  EntityType?: string;
   IsResolved?: boolean;
   EntityData?: {
     Email?: string;
+    AccountName?: string;
     Title?: string;
     Department?: string;
-    AccountName?: string;
   };
 }
 
@@ -25,35 +27,64 @@ export interface PeoplePickerProps {
   className?: string;
   description?: string;
   placeholder?: string;
+
+  /** builder passes either of these; normalize below */
   isRequired?: boolean;
-  isrequired?: boolean;      // tolerated alias per your builder
+  isrequired?: boolean;
+
   submitting?: boolean;
-  /** 👇 match TagPicker: pass true to allow multiple selections */
-  multiselect?: boolean;     // <— use this, not `single`
+  /** match TagPicker API: multiselect controls single vs multi */
+  multiselect?: boolean;
   disabled?: boolean;
-  starterValue?: { key: string; text: string } | { key: string; text: string }[];
+
+  /** starter can be single or array, keep shape compatible with TagPicker */
+  starterValue?:
+    | { key: string | number; text: string }
+    | { key: string | number; text: string }[];
+
+  /** notify parent with resolved SharePoint-style entities */
   onChange?: (entities: PickerEntity[]) => void;
 
-  // REST bits (kept exactly as you had)
+  /** optional knobs (defaults supplied) */
+  principalType?: PrincipalType;  // 1 = User only
+  maxSuggestions?: number;        // default 5
+  allowFreeText?: boolean;        // default false
+
+  /** optional SPFx client + config for first-class POST */
   spHttpClient?: any;
   spHttpClientConfig?: any;
-  principalType?: PrincipalType;
-  maxSuggestions?: number;
-  allowFreeText?: boolean;
-
-  [key: string]: any;
 }
 
-const toTag = (e: PickerEntity): ITag => ({
-  key: e.Key || e.EntityData?.AccountName || e.EntityData?.Email || e.DisplayText,
-  name: e.DisplayText || e.EntityData?.Email || e.Key,
-});
+/* ------------------------- Helpers / shared pieces ------------------------ */
 
 const suggestionsProps: IBasePickerSuggestionsProps = {
   suggestionsHeaderText: "People",
   noResultsFoundText: "No results",
   resultsMaximumNumber: 5,
 };
+
+/** Make an ITag from a SharePoint people entity — never return undefined keys. */
+const toTag = (e: PickerEntity): ITag => {
+  const rawKey =
+    e.Key ??
+    e.EntityData?.AccountName ??
+    e.EntityData?.Email ??
+    e.DisplayText ??
+    "";
+
+  const rawName =
+    e.DisplayText ??
+    e.EntityData?.Email ??
+    e.Key ??
+    "(unknown)";
+
+  return {
+    key: String(rawKey),
+    name: String(rawName),
+  };
+};
+
+/* -------------------------------- Component -------------------------------- */
 
 const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
   const {
@@ -65,58 +96,60 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
     isRequired,
     isrequired,
     submitting,
-    multiselect,             // 👈 source of truth like TagPicker
+    multiselect,
     disabled,
     starterValue,
     onChange,
+
+    principalType = 1,
+    maxSuggestions = 5,
+    allowFreeText = false,
+
     spHttpClient,
     spHttpClientConfig,
-    principalType = 1,
-    maxSuggestions = 25,
-    allowFreeText = false,
   } = props;
 
-  // ---- required flag (unchanged) ----
   const requiredEffective = (isRequired ?? isrequired) ?? false;
+  const isMulti = multiselect === true;
 
-  // ---- explicit SharePoint URL (unchanged from your code) ----
-  const webUrl  = "https://amerihealthcaritas.sharepoint.com/sites/eokm";
-  const apiUrl  = `${webUrl}/_api/SP.UI.ApplicationPages.ClientPeoplePickerWebServiceInterface.clientPeoplePickerSearchUser`;
+  // ---- Explicit web URL (match what you’ve been using) ----
+  const webUrl = "https://amerihealthcaritas.sharepoint.com/sites/eokm";
+  const apiUrl = `${webUrl}/_api/SP.UI.ApplicationPages.ClientPeoplePickerWebServiceInterface.clientPeoplePickerSearchUser`;
 
-  // ---- SINGLE vs MULTI: behave like TagPicker ----
-  const isMulti = multiselect === true;     // 👈 same meaning as your TagPicker prop
+  // ---- Normalize starter(s) into ITag[] ----
+  const starterArray = Array.isArray(starterValue)
+    ? starterValue
+    : starterValue
+    ? [starterValue]
+    : [];
 
-  // ---- starter normalization (keep 1 when single) ----
-  const starterArray =
-    Array.isArray(starterValue) ? starterValue :
-    starterValue ? [starterValue] : [];
+  const normalizedStarter: ITag[] = (isMulti ? starterArray : starterArray.slice(-1)).map(v => ({
+    key: String(v.key),
+    name: v.text,
+  }));
 
-  const normalizedStarter = isMulti ? starterArray : starterArray.slice(-1);
-
-  const [selectedTags, setSelectedTags] = React.useState<ITag[]>(
-    normalizedStarter.map(v => ({ key: v.key, name: v.text }))
-  );
-
+  const [selectedTags, setSelectedTags] = React.useState<ITag[]>(normalizedStarter);
   const [lastResolved, setLastResolved] = React.useState<PickerEntity[]>([]);
 
-  // ---- Search SharePoint people (kept as you had it) ----
+  /* -------------------------- Search (REST people API) ------------------------- */
   const searchPeople = React.useCallback(async (query: string): Promise<ITag[]> => {
-    if (!query?.trim()) return [];
+    if (!query.trim()) return [];
 
     const body = JSON.stringify({
       queryParams: {
         __metadata: { type: "SP.UI.ApplicationPages.ClientPeoplePickerQueryParameters" },
-        AllowEmailAddresses: true,
-        AllowMultipleEntities: false,
-        AllUrlZones: false,
-        MaximumEntitySuggestions: maxSuggestions,
         QueryString: query,
-        PrincipalSource: 1,
-        PrincipalType: principalType,
-      }
+        PrincipalSource: 15,      // All
+        AllowMultipleEntities: true,
+        MaximumEntitySuggestions: maxSuggestions,
+        PrincipalType: principalType, // 1 = Users
+        AllUrlZones: false,
+        AllowEmailAddresses: true,
+      },
     });
 
     try {
+      // Prefer SPHttpClient if supplied
       if (spHttpClient && spHttpClientConfig) {
         const resp = await spHttpClient.post(apiUrl, spHttpClientConfig, {
           headers: {
@@ -126,13 +159,11 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
           },
           body,
         });
-
         if (!resp.ok) {
-          const text = await resp.text().catch(() => "");
-          console.error("PeoplePicker SPHttpClient error:", resp.status, resp.statusText, text);
+          const txt = await resp.text().catch(() => "");
+          console.error("PeoplePicker SPHttpClient error:", resp.status, resp.statusText, txt);
           return [];
         }
-
         const data = await resp.json();
         const raw = data?.d?.ClientPeoplePickerSearchUserResult ?? "[]";
         const entities: PickerEntity[] = JSON.parse(raw);
@@ -140,8 +171,10 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
         return entities.map(toTag);
       }
 
-      // ---- fallback fetch (unchanged) ----
-      const digest = (document.getElementById("__REQUESTDIGEST") as HTMLInputElement)?.value || "";
+      // Fallback: classic fetch with request digest
+      const digest =
+        (document.getElementById("__REQUESTDIGEST") as HTMLInputElement)?.value || "";
+
       const resp = await fetch(apiUrl, {
         method: "POST",
         headers: {
@@ -155,8 +188,8 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
       });
 
       if (!resp.ok) {
-        const text = await resp.text().catch(() => "");
-        console.error("PeoplePicker fetch error:", resp.status, resp.statusText, text);
+        const txt = await resp.text().catch(() => "");
+        console.error("PeoplePicker fetch error:", resp.status, resp.statusText, txt);
         return [];
       }
 
@@ -171,61 +204,55 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
     }
   }, [apiUrl, maxSuggestions, principalType, spHttpClient, spHttpClientConfig]);
 
-  // ---- onChange: clamp to 1 when NOT multiselect (TagPicker pattern) ----
-  const handleChange = React.useCallback((items?: ITag[]) => {
-    let next = items ?? [];
+  /* ------------------------ Change mapping back to entities ------------------------ */
+  const handleChange = React.useCallback(
+    (items: ITag[] = []) => {
+      setSelectedTags(items);
 
-    if (!isMulti && next.length > 1) {
-      // keep the most recent one (same approach you used in v9 TagPicker)
-      next = [next[next.length - 1]];
-    }
+      if (!onChange) return;
 
-    setSelectedTags(next);
+      // Build a quick lookup from resolved entities
+      const resolvedByKey = new Map(
+        lastResolved.map(e => [String(e.Key ?? e.EntityData?.AccountName ?? e.EntityData?.Email ?? e.DisplayText ?? "").toLowerCase(), e])
+      );
 
-    if (!onChange) return;
+      const result: PickerEntity[] = [];
 
-    // Map selected tags back to the last resolved entities by key/email/account
-    const keys = new Set(next.map(t => String(t.key).toLowerCase()));
-    const matched: PickerEntity[] = [];
-    for (const e of lastResolved) {
-      const k =
-        (e.Key ??
-         e.EntityData?.AccountName ??
-         e.EntityData?.Email ??
-         e.DisplayText ??
-         "").toLowerCase();
-      if (keys.has(k)) matched.push(e);
-    }
-    onChange(matched);
-  }, [isMulti, lastResolved, onChange]);
+      for (const t of items) {
+        const lk = String(t.key).toLowerCase();
 
-  // ---- suggestions: once 1 is chosen in single mode, stop suggesting ----
-  const onResolveSuggestions = React.useCallback((filter: string, selected?: ITag[]) => {
-    const sel = selected ?? selectedTags;
-    if (!isMulti && sel.length >= 1) return [];
-    const term = (filter ?? "").toString();
-    return searchPeople(term).then(tags =>
-      tags.filter(t => !(sel ?? []).some(s => String(s.key) === String(t.key)))
-    );
-  }, [isMulti, selectedTags, searchPeople]);
+        const hit =
+          lastResolved.find(e =>
+            (e.Key ?? "").toLowerCase() === lk ||
+            (e.EntityData?.AccountName ?? "").toLowerCase() === lk ||
+            (e.EntityData?.Email ?? "").toLowerCase() === lk
+          ) || resolvedByKey.get(lk);
+
+        if (hit) {
+          result.push(hit);
+        } else if (allowFreeText) {
+          // synthesize a minimal entity from free text/key
+          result.push({
+            Key: String(t.key),
+            DisplayText: t.name,
+            IsResolved: false,
+            EntityData: { Email: /@/.test(String(t.key)) ? String(t.key) : undefined },
+          });
+        }
+      }
+
+      onChange(result);
+    },
+    [onChange, lastResolved, allowFreeText]
+  );
+
+  /* ------------------------- Picker rendering & behavior ------------------------- */
 
   const requiredMsg =
     requiredEffective && selectedTags.length === 0 ? "This field is required." : undefined;
 
   const isDisabled = Boolean(submitting || disabled);
-
-  const picker = (
-    <TagPicker
-      className={className}
-      disabled={isDisabled}
-      onResolveSuggestions={onResolveSuggestions}
-      getTextFromItem={(t) => t.name}
-      selectedItems={selectedTags}
-      onChange={handleChange}
-      pickerSuggestionsProps={suggestionsProps}
-      inputProps={{ placeholder: placeholder ?? "Search people…" }}
-    />
-  );
+  const itemLimit = isMulti ? undefined : 1; // v8 TagPicker respects itemLimit
 
   return displayName ? (
     <Field
@@ -234,10 +261,42 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
       validationMessage={requiredMsg}
       validationState={requiredMsg ? "error" : "none"}
     >
-      {picker}
+      <TagPicker
+        className={className}
+        disabled={isDisabled}
+        itemLimit={itemLimit}
+        onResolveSuggestions={(filter, selected) => {
+          // If single-select and something already selected, don't offer more
+          if (!isMulti && (selected?.length ?? 0) >= 1) return [];
+          return searchPeople(filter || "").then(tags =>
+            // filter out any already selected tags by key
+            tags.filter(t => !(selected ?? []).some(s => String(s.key) === String(t.key)))
+          );
+        }}
+        getTextFromItem={(t) => t.name}
+        selectedItems={selectedTags}
+        onChange={handleChange}
+        pickerSuggestionsProps={suggestionsProps}
+        inputProps={{ placeholder: placeholder ?? "Search people…" }}
+      />
     </Field>
   ) : (
-    picker
+    <TagPicker
+      className={className}
+      disabled={isDisabled}
+      itemLimit={itemLimit}
+      onResolveSuggestions={(filter, selected) => {
+        if (!isMulti && (selected?.length ?? 0) >= 1) return [];
+        return searchPeople(filter || "").then(tags =>
+          tags.filter(t => !(selected ?? []).some(s => String(s.key) === String(t.key)))
+        );
+      }}
+      getTextFromItem={(t) => t.name}
+      selectedItems={selectedTags}
+      onChange={handleChange}
+      pickerSuggestionsProps={suggestionsProps}
+      inputProps={{ placeholder: placeholder ?? "Search people…" }}
+    />
   );
 };
 
