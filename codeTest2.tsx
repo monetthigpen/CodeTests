@@ -2,42 +2,27 @@
 React.useEffect(() => {
   // Only run for EditForm(6) or ViewForm(4)
   if (!(ctx.FormMode === 4 || ctx.FormMode === 6)) {
-    // NewForm (8) etc → do nothing, picker starts empty
-    return;
-  }
-
-  // Don't hydrate again if we already resolved something
-  if (lastResolved.length > 0) {
     return;
   }
 
   const fieldInternalName = id;
-
   const formData = ctx.FormData as any | undefined;
-  if (!formData) {
-    return;
-  }
+  if (!formData) return;
 
-  // 🔹 NEW: look at <InternalName>, then <InternalName>Id, then <InternalName>StringId
+  // Look at <InternalName>, then <InternalName>Id, then <InternalName>StringId
   let rawValue: any = formData[fieldInternalName];
-
   if (rawValue === undefined) {
     const idProp = `${fieldInternalName}Id`;
     const stringIdProp = `${fieldInternalName}StringId`;
-
     rawValue = formData[idProp] ?? formData[stringIdProp];
   }
 
-  // Nothing saved for this field
-  if (rawValue === null || rawValue === undefined) {
-    return;
-  }
+  if (rawValue === null || rawValue === undefined) return;
 
-  // ---- Helper: normalize whatever SharePoint stored into numeric SPUserID[] ----
+  // ---- normalize whatever SP stored into numeric SPUserID[] ----
   const collectIds = (value: any): number[] => {
     if (value === null || value === undefined) return [];
 
-    // Already an array (multi-value people / lookup field)
     if (Array.isArray(value)) {
       const ids: number[] = [];
       for (const v of value) {
@@ -50,7 +35,6 @@ React.useEffect(() => {
       return ids.filter((id) => !Number.isNaN(id));
     }
 
-    // String / number – could be "738;#729" or "738,729"
     const str = String(value);
     const parts = str.split(/[;,#]/);
     return parts
@@ -59,10 +43,7 @@ React.useEffect(() => {
   };
 
   const numericIds = collectIds(rawValue);
-
-  if (!numericIds.length) {
-    return;
-  }
+  if (!numericIds.length) return;
 
   const abort = new AbortController();
 
@@ -75,9 +56,7 @@ React.useEffect(() => {
           `${webUrl}/_api/web/getUserById(${userId})`,
           {
             method: "GET",
-            headers: {
-              Accept: "application/json;odata=verbose"
-            },
+            headers: { Accept: "application/json;odata=verbose" },
             signal: abort.signal
           }
         );
@@ -108,18 +87,13 @@ React.useEffect(() => {
           }
         });
       } catch (err) {
-        if (abort.signal.aborted) {
-          return;
-        }
+        if (abort.signal.aborted) return;
         console.error("PeoplePicker getUserById error", err);
       }
     }
 
-    if (!hydrated.length) {
-      return;
-    }
+    if (!hydrated.length) return;
 
-    // Store resolved entities & show them in the picker
     setLastResolved(hydrated);
 
     const tags = hydrated.map(toTag);
@@ -131,7 +105,17 @@ React.useEffect(() => {
   })();
 
   return () => abort.abort();
-}, [ctx.FormMode, ctx.FormData, id, lastResolved.length, onChange, webUrl]);
+}, [ctx.FormMode, ctx.FormData, id, onChange, webUrl]);
+
+// ------- NEW FORM: reset picker state so search works normally -------
+React.useEffect(() => {
+  if (ctx.FormMode === 8) {
+    // New form → start clean
+    setSelectedTags([]);
+    setLastResolved([]);
+  }
+}, [ctx.FormMode]);
+
 
 
 
