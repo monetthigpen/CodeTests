@@ -13,13 +13,20 @@ React.useEffect(() => {
 
   const fieldInternalName = id;
 
-  // Same pattern as your TextAreaComponent:
   const formData = ctx.FormData as any | undefined;
   if (!formData) {
     return;
   }
 
-  const rawValue = formData[fieldInternalName];
+  // 🔹 NEW: look at <InternalName>, then <InternalName>Id, then <InternalName>StringId
+  let rawValue: any = formData[fieldInternalName];
+
+  if (rawValue === undefined) {
+    const idProp = `${fieldInternalName}Id`;
+    const stringIdProp = `${fieldInternalName}StringId`;
+
+    rawValue = formData[idProp] ?? formData[stringIdProp];
+  }
 
   // Nothing saved for this field
   if (rawValue === null || rawValue === undefined) {
@@ -30,7 +37,7 @@ React.useEffect(() => {
   const collectIds = (value: any): number[] => {
     if (value === null || value === undefined) return [];
 
-    // Already an array (multi-value people field)
+    // Already an array (multi-value people / lookup field)
     if (Array.isArray(value)) {
       const ids: number[] = [];
       for (const v of value) {
@@ -43,7 +50,7 @@ React.useEffect(() => {
       return ids.filter((id) => !Number.isNaN(id));
     }
 
-    // String / number – could be "1;#2;#3" or "1,2,3"
+    // String / number – could be "738;#729" or "738,729"
     const str = String(value);
     const parts = str.split(/[;,#]/);
     return parts
@@ -125,5 +132,6 @@ React.useEffect(() => {
 
   return () => abort.abort();
 }, [ctx.FormMode, ctx.FormData, id, lastResolved.length, onChange, webUrl]);
+
 
 
