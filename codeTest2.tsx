@@ -1,120 +1,92 @@
-// ------- EDIT / VIEW FORM: hydrate PeoplePicker from ctx.FormData (SPUserID) -------
-React.useEffect(() => {
-  // Only run for EditForm(6) or ViewForm(4)
-  if (!(ctx.FormMode === 4 || ctx.FormMode === 6)) {
-    return;
-  }
-
-  const fieldInternalName = id;
-  const formData = ctx.FormData as any | undefined;
-  if (!formData) return;
-
-  // Look at <InternalName>, then <InternalName>Id, then <InternalName>StringId
-  let rawValue: any = formData[fieldInternalName];
-  if (rawValue === undefined) {
-    const idProp = `${fieldInternalName}Id`;
-    const stringIdProp = `${fieldInternalName}StringId`;
-    rawValue = formData[idProp] ?? formData[stringIdProp];
-  }
-
-  if (rawValue === null || rawValue === undefined) return;
-
-  // ---- normalize whatever SP stored into numeric SPUserID[] ----
-  const collectIds = (value: any): number[] => {
-    if (value === null || value === undefined) return [];
-
-    if (Array.isArray(value)) {
-      const ids: number[] = [];
-      for (const v of value) {
-        if (v && typeof v === "object" && "Id" in v) {
-          ids.push(Number((v as any).Id));
-        } else {
-          ids.push(Number(v));
-        }
-      }
-      return ids.filter((id) => !Number.isNaN(id));
+// ----------------- Search (REST people API) -----------------
+const searchPeople = React.useCallback(
+  async (query: string): Promise<ITag[]> => {
+    if (!query.trim()) {
+      return [];
     }
 
-    const str = String(value);
-    const parts = str.split(/[;,#]/);
-    return parts
-      .map((p) => Number(p.trim()))
-      .filter((id) => !Number.isNaN(id));
-  };
+    // NOTE: double underscore in __metadata is required
+    const payload = {
+      queryParams: {
+        __metadata: {
+          type: "SP.UI.ApplicationPages.ClientPeoplePickerQueryParameters",
+        },
+        AllowEmailAddresses: true,
+        AllowMultipleEntities: isMulti,
+        AllUrlZones: false,
+        MaximumEntitySuggestions: maxSuggestions,
+        PrincipalSource: 15,       // All sources
+        PrincipalType: principalType, // 1 = Users
+        QueryString: query,
+      },
+    };
 
-  const numericIds = collectIds(rawValue);
-  if (!numericIds.length) return;
-
-  const abort = new AbortController();
-
-  (async () => {
-    const hydrated: PickerEntity[] = [];
-
-    for (const userId of numericIds) {
-      try {
-        const resp = await fetch(
-          `${webUrl}/_api/web/getUserById(${userId})`,
-          {
-            method: "GET",
-            headers: { Accept: "application/json;odata=verbose" },
-            signal: abort.signal
-          }
-        );
+    try {
+      // Prefer SPHttpClient when available
+      if (spHttpClient && spHttpClientConfig) {
+        const resp = await spHttpClient.post(apiUrl, spHttpClientConfig, {
+          headers: {
+            Accept: "application/json;odata=verbose",
+            "Content-Type": "application/json;odata=verbose",
+          },
+          body: JSON.stringify(payload),
+        });
 
         if (!resp.ok) {
-          console.warn(
-            "PeoplePicker getUserById failed",
-            userId,
+          const txt = await resp.text().catch(() => "");
+          console.error(
+            "PeoplePicker spHttpClient error",
             resp.status,
-            resp.statusText
+            resp.statusText,
+            txt
           );
-          continue;
+          return [];
         }
 
-        const json: any = await resp.json();
-        const u = json.d;
+        const data: any = await resp.json();
+        const raw = data.d?.ClientPeoplePickerSearchUser ?? "[]";
+        const entities: PickerEntity[] = JSON.parse(raw);
 
-        hydrated.push({
-          Key: String(u.Id),
-          DisplayText: u.Title,
-          IsResolved: true,
-          EntityType: "User",
-          EntityData2: {
-            Email: u.Email,
-            AccountName: u.LoginName,
-            Title: u.Title,
-            Department2: u.Department || ""
-          }
-        });
-      } catch (err) {
-        if (abort.signal.aborted) return;
-        console.error("PeoplePicker getUserById error", err);
+        setLastResolved(entities);
+        return entities.map(toTag);
       }
+
+      // Fallback to classic fetch (same payload & headers)
+      const resp = await fetch(apiUrl, {
+        method: "POST",
+        headers: {
+          Accept: "application/json;odata=verbose",
+          "Content-Type": "application/json;odata=verbose",
+        },
+        body: JSON.stringify(payload),
+        credentials: "same-origin",
+      });
+
+      if (!resp.ok) {
+        const txt = await resp.text().catch(() => "");
+        console.error(
+          "PeoplePicker fetch error",
+          resp.status,
+          resp.statusText,
+          txt
+        );
+        return [];
+      }
+
+      const json: any = await resp.json();
+      const raw = json.d?.ClientPeoplePickerSearchUser ?? "[]";
+      const entities: PickerEntity[] = JSON.parse(raw);
+
+      setLastResolved(entities);
+      return entities.map(toTag);
+    } catch (e) {
+      console.error("PeoplePicker search exception", e);
+      return [];
     }
+  },
+  [isMulti, maxSuggestions, principalType, spHttpClient, spHttpClientConfig, apiUrl]
+);
 
-    if (!hydrated.length) return;
-
-    setLastResolved(hydrated);
-
-    const tags = hydrated.map(toTag);
-    setSelectedTags(tags);
-
-    if (onChange) {
-      onChange(hydrated);
-    }
-  })();
-
-  return () => abort.abort();
-}, [ctx.FormMode, ctx.FormData, id, onChange, webUrl]);
-
-// ------- NEW FORM: reset picker state so search works normally -------
-React.useEffect(() => {
-  if (ctx.FormMode === 8) {
-    // New form → start clean
-    setSelectedTags([]);
-    setLastResolved([]);
-  }
-}, [ctx.FormMode]);
 
 
 
