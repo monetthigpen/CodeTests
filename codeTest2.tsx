@@ -1,16 +1,16 @@
 // PeoplePickerComponent.tsx
 import * as React from "react";
-import { Field } from "@fluentui/react-components"; // v9
+import { Field } from "@fluentui/react-components";             // v9
 import {
   TagPicker,
   ITag,
   IBasePickerSuggestionsProps,
-} from "@fluentui/react"; // v8
+} from "@fluentui/react";                                      // v8
 import { DynamicFormContext } from "./DynamicFormContext";
 
-/* ------------------------------------------------
- * Types
- * ------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* Types                                                              */
+/* ------------------------------------------------------------------ */
 
 export type PrincipalType = 0 | 1 | 2 | 4 | 8 | 15;
 
@@ -24,48 +24,51 @@ export interface PickerEntity {
     AccountName?: string;
     Title?: string;
     Department2?: string;
+    SPUserID?: number;          // for edit hydrations & GlobalFormData
   };
 }
 
 export interface PeoplePickerProps {
   id: string;
-  displayName?: string;
-  className?: string;
-  description?: string;
-  placeholder?: string;
+  displayName2?: string;
+  className2?: string;
+  description2?: string;
+  placeholder2?: string;
 
-  isRequired?: boolean;
+  isRequired2?: boolean;
   isrequired2?: boolean;
   submitting?: boolean;
 
-  /* match TagPicker: pass true to allow multiple selections */
+  /** match TagPicker: pass true to allow multiple selections */
   multiselect?: boolean;
   disabled?: boolean;
 
-  /** optional default(s); kept for compatibility but NOT used for Edit hydrations */
+  /** optional starter value: NOT used for Edit hydrations, only NEW */
   starterValue?:
     | { key: string | number; text: string }
     | { key: string | number; text: string }[];
 
   /** notify parent with SharePoint-style entities */
-  onChange?: (entities: PickerEntity[]) => void;
+  onChange2?: (entities: PickerEntity[]) => void;
 
   /* optional knobs (defaults supplied) */
-  principalType?: PrincipalType; // 1 = user only
-  maxSuggestions?: number; // default 5
-  allowFreeText?: boolean; // default false
+  principalType?: PrincipalType;   // 1 = user only
+  maxSuggestions?: number;         // default 5
+  allowFreeText?: boolean;         // default false
 
   /* optional SPFx client + config for first-class POST */
-  spHttpClient?: any;
-  spHttpClientConfig?: any;
+  spHttpClient2?: any;
+  spHttpClientConfig2?: any;
 
   /* tolerate unknown props from builder */
   [key: string]: any;
 }
 
-/* ------------------------------------------------
- * Helpers / shared pieces
- * ------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* Helpers / shared pieces                                            */
+/* ------------------------------------------------------------------ */
+
+const REQUIRED_MSG = "This field is required.";
 
 const suggestionsProps: IBasePickerSuggestionsProps = {
   suggestionsHeaderText: "People",
@@ -94,65 +97,159 @@ const toTag = (e: PickerEntity): ITag => {
   };
 };
 
-/* ------------------------------------------------
- * Component
- * ------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* Component                                                          */
+/* ------------------------------------------------------------------ */
 
 const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
   const ctx = React.useContext(DynamicFormContext);
 
   const {
     id,
-    displayName,
-    className,
-    description,
-    placeholder,
-    isRequired,
+    displayName2,
+    className2,
+    description2,
+    placeholder2,
+    isRequired2,
     isrequired2,
     submitting,
     multiselect,
     disabled,
     starterValue,
-    onChange,
+    onChange2,
     principalType = 1,
     maxSuggestions = 5,
     allowFreeText = false,
-    spHttpClient,
-    spHttpClientConfig,
+    spHttpClient2,
+    spHttpClientConfig2,
   } = props;
 
-  const requiredEffective = (isRequired ?? isrequired2) ?? false;
-  const isMulti = multiselect === true;
+  /* effective, TagPicker-style props */
+  const displayName = displayName2 ?? (props as any).displayName ?? id;
+  const className = className2 ?? (props as any).className;
+  const description = description2 ?? (props as any).description;
+  const placeholder = placeholder2 ?? (props as any).placeholder;
+  const isRequired = isRequired2 ?? isrequired2 ?? false;
 
-  // Explicit site URL (same pattern you used earlier)
-  const webUrl = "https://amerihealthcaritas.sharepoint.com/sites/eokm";
+  const requiredEffective = !!isRequired;
+  const isMulti = multiselect === true;
+  const isSubmitting = !!submitting;
+
+  // Explicit site URL (same pattern as in your screenshots)
+  const webUrl =
+    "https://amerihealthcaritas.sharepoint.com/sites/eokm";
   const apiUrl =
     `${webUrl}/_api/SP.UI.ApplicationPages.ClientPeoplePickerWebServiceInterface.clientPeoplePickerSearchUser`;
 
-  // --- Normalize starterValue into ITag[] (only used for NEW forms if provided) ---
-  const starterArray: { key: string | number; text: string }[] =
-    Array.isArray(starterValue)
-      ? starterValue
-      : starterValue
-      ? [starterValue]
-      : [];
+  /* -------------------------- React state -------------------------- */
 
-  const normalizedStarter: ITag[] = (isMulti ? starterArray : starterArray.slice(-1)).map(
-    (v) => ({
-      key: String(v.key),
-      name: v.text,
-    })
+  const [selectedTags, setSelectedTags] = React.useState<ITag[]>([]);
+  const [lastResolved, setLastResolved] = React.useState<PickerEntity[]>([]);
+  const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabled);
+  const [error, setError] = React.useState<string>("");
+  const [displayOverride, setDisplayOverride] = React.useState<string>("");
+
+  const elemRef = React.useRef<HTMLDivElement | null>(null);
+
+  /* ------------------------- Global helpers ------------------------ */
+
+  // Register DOM element with global refs (for focus/scroll, etc.)
+  React.useEffect(() => {
+    if (ctx && ctx.GlobalRefs) {
+      ctx.GlobalRefs(
+        elemRef.current !== null ? elemRef.current : undefined,
+        id
+      );
+    }
+  }, [ctx, id]);
+
+  // Report validation error through global handler
+  const reportError = React.useCallback(
+    (msg: string) => {
+      const targetId = `${id}Id`;
+      const next = msg || "";
+      setError(next);
+      if (ctx && ctx.GlobalErrorHandle) {
+        ctx.GlobalErrorHandle(targetId, next || undefined);
+      }
+    },
+    [ctx, id]
   );
 
-  const [selectedTags, setSelectedTags] = React.useState<ITag[]>(normalizedStarter);
-  const [lastResolved, setLastResolved] = React.useState<PickerEntity[]>([]);
+  // Validate required-ness like TagPicker
+  const validate = React.useCallback((): string => {
+    if (requiredEffective && selectedTags.length === 0) {
+      return REQUIRED_MSG;
+    }
+    return "";
+  }, [requiredEffective, selectedTags.length]);
 
-  // Hidden input only for GlobalRefs (so it matches TagPicker pattern)
-  const elemRef = React.useRef<HTMLInputElement | null>(null);
+  // Commit a full set of resolved entities into GlobalFormData + fire onChange2
+  const commitValue = React.useCallback(
+    (entities: PickerEntity[]) => {
+      // Required validation
+      const err = validate();
+      reportError(err);
 
-  /* ------------------------------------------------
-   * Search (REST people API)
-   * ------------------------------------------------ */
+      // Build numeric SPUserID list (fall back to numeric Key)
+      const ids: number[] = [];
+      for (const e of entities) {
+        let idVal: number | undefined;
+        if (typeof e.EntityData2?.SPUserID === "number") {
+          idVal = e.EntityData2.SPUserID;
+        } else {
+          const numKey = Number(e.Key);
+          if (!Number.isNaN(numKey)) {
+            idVal = numKey;
+          }
+        }
+        if (typeof idVal === "number" && !Number.isNaN(idVal)) {
+          ids.push(idVal);
+        }
+      }
+
+      const targetId = `${id}Id`;
+      if (ctx && ctx.GlobalFormData) {
+        if (isMulti) {
+          ctx.GlobalFormData(targetId, ids.length === 0 ? [] : ids);
+        } else {
+          ctx.GlobalFormData(
+            targetId,
+            ids.length === 0 ? null : ids[0]
+          );
+        }
+      }
+
+      if (onChange2) {
+        onChange2(entities);
+      }
+
+      // Display text (similar to TagPicker's displayOverride)
+      const labels = entities.map((e) => e.DisplayText ?? e.Key);
+      setDisplayOverride(labels.join("; "));
+    },
+    [ctx, id, isMulti, onChange2, validate, reportError]
+  );
+
+  /* ---------------------- Normalize starterValue ------------------- */
+  // Only used for NEW forms if builder provides; edit hydration uses ctx.FormData.
+
+  const starterArray: { key: string | number; text: string }[] =
+    starterValue == null
+      ? []
+      : Array.isArray(starterValue)
+      ? starterValue
+      : [starterValue];
+
+  const normalizedStarter: ITag[] = (isMulti
+    ? starterArray
+    : starterArray.slice(-1)
+  ).map((v) => ({
+    key: String(v.key),
+    name: v.text,
+  }));
+
+  /* -------------------------- Search (REST) ------------------------ */
 
   const searchPeople = React.useCallback(
     async (query: string): Promise<ITag[]> => {
@@ -161,7 +258,8 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
       const body = JSON.stringify({
         queryParams: {
           __metadata: {
-            type: "SP.UI.ApplicationPages.ClientPeoplePickerQueryParameters",
+            type:
+              "SP.UI.ApplicationPages.ClientPeoplePickerQueryParameters",
           },
           AllowEmailAddresses: true,
           AllowMultipleEntities: isMulti,
@@ -174,21 +272,25 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
       });
 
       try {
-        // Prefer SPFx client if provided
-        if (spHttpClient && spHttpClientConfig) {
-          const resp = await spHttpClient.post(apiUrl, spHttpClientConfig, {
-            headers: {
-              Accept: "application/json;odata=verbose",
-              "Content-Type": "application/json;odata=verbose",
-              "odata-version": "3.0",
-            },
-            body,
-          });
+        // Prefer SPFx HttpClient if provided (like your TagPicker)
+        if (spHttpClient2 && spHttpClientConfig2) {
+          const resp = await spHttpClient2.post(
+            apiUrl,
+            spHttpClientConfig2,
+            {
+              headers: {
+                Accept: "application/json;odata=verbose",
+                "Content-Type": "application/json;odata=verbose",
+                "odata-version": "3.0",
+              },
+              body,
+            }
+          );
 
           if (!resp.ok) {
             const txt = await resp.text().catch(() => "");
             console.error(
-              "PeoplePicker spHttpClient error:",
+              "PeoplePicker spHttpClient error",
               resp.status,
               resp.statusText,
               txt
@@ -199,14 +301,26 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
           const data: any = await resp.json();
           const raw = data.d?.ClientPeoplePickerSearchUser ?? "[]";
           const entities: PickerEntity[] = JSON.parse(raw);
+          // Capture SPUserID if present
+          entities.forEach((e: any) => {
+            const ed = (e.EntityData || e.EntityData2) as any;
+            if (ed && typeof ed.SPUserID === "number") {
+              e.EntityData2 = {
+                ...(e.EntityData2 || {}),
+                SPUserID: ed.SPUserID,
+              };
+            }
+          });
           setLastResolved(entities);
           return entities.map(toTag);
         }
 
         // Fallback: classic fetch with request digest
-        const digest = (document.getElementById(
-          "__REQUESTDIGEST"
-        ) as HTMLInputElement | null)?.value;
+        const digest = (
+          document.getElementById("__REQUESTDIGEST") as
+            | HTMLInputElement
+            | null
+        )?.value;
 
         const resp = await fetch(apiUrl, {
           method: "POST",
@@ -235,6 +349,15 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
         const raw =
           json.d?.ClientPeoplePickerSearchUser ?? "[]";
         const entities: PickerEntity[] = JSON.parse(raw);
+        entities.forEach((e: any) => {
+          const ed = (e.EntityData || e.EntityData2) as any;
+          if (ed && typeof ed.SPUserID === "number") {
+            e.EntityData2 = {
+              ...(e.EntityData2 || {}),
+              SPUserID: ed.SPUserID,
+            };
+          }
+        });
         setLastResolved(entities);
         return entities.map(toTag);
       } catch (e) {
@@ -242,19 +365,22 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
         return [];
       }
     },
-    [apiUrl, isMulti, maxSuggestions, principalType, spHttpClient, spHttpClientConfig]
+    [
+      apiUrl,
+      isMulti,
+      maxSuggestions,
+      principalType,
+      spHttpClient2,
+      spHttpClientConfig2,
+    ]
   );
 
-  /* ------------------------------------------------
-   * Change mapping back to entities
-   * ------------------------------------------------ */
+  /* ------------------ Tag -> PickerEntity mapping ------------------ */
 
   const handleChange = React.useCallback(
     (items?: ITag[]) => {
       const next = items ?? [];
       setSelectedTags(next);
-
-      if (!onChange) return;
 
       const result: PickerEntity[] = [];
 
@@ -273,7 +399,6 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
       for (const t of next) {
         const lk = String(t.key).toLowerCase();
         const match = resolvedByKey.get(lk);
-
         if (match) {
           result.push(match);
           continue;
@@ -288,32 +413,34 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
             EntityType: "User",
             EntityData2: {
               Email: /@/.test(String(t.key)) ? String(t.key) : undefined,
+              Title: t.name,
+              Department2: "",
             },
           });
         }
       }
 
-      onChange(result);
+      commitValue(result);
     },
-    [allowFreeText, lastResolved, onChange]
+    [allowFreeText, commitValue, lastResolved]
   );
 
-  /* ------------------------------------------------
-   * EDIT / VIEW FORMS: hydrate PeoplePicker from ctx.FormData (SPUserID)
-   * ------------------------------------------------ */
+  /* ---------------- EDIT / VIEW: hydrate from ctx.FormData --------- */
+  // SPUserID values pulled from FormData then resolved via REST
 
   React.useEffect(() => {
-    // Only run for EditForm(6) or ViewForm(4)
+    // Only run for Edit(6) or View(4)
     if (!(ctx.FormMode === 4 || ctx.FormMode === 6)) {
       return;
     }
 
-    const fieldInternalName = id;
     const formData = ctx.FormData as any | undefined;
     if (!formData) return;
 
-    // Look at <InternalName>Id, then <InternalName>Id, then <InternalName>StringId
-    let rawValue: any = formData[`${fieldInternalName}Id`];
+    const fieldInternalName = id;
+
+    // Try <InternalName>Id, then <InternalName>StringId, then <InternalName>
+    let rawValue: any = formData[fieldInternalName];
     if (rawValue === undefined) {
       const idProp = `${fieldInternalName}Id`;
       const stringIdProp = `${fieldInternalName}StringId`;
@@ -322,10 +449,9 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
 
     if (rawValue === null || rawValue === undefined) return;
 
-    // --- normalize whatever SP stored into numeric SPUserID ---
+    // Normalize whatever SP stored into numeric SPUserID[]
     const collectIds = (value: any): number[] => {
       if (value === null || value === undefined) return [];
-
       if (Array.isArray(value)) {
         const ids: number[] = [];
         for (const v of value) {
@@ -337,7 +463,6 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
         }
         return ids.filter((id) => !Number.isNaN(id));
       }
-
       const str = String(value);
       const parts = str.split(/[;,#]/);
       return parts
@@ -359,7 +484,9 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
             `${webUrl}/_api/web/getUserById(${userId})`,
             {
               method: "GET",
-              headers: { Accept: "application/json;odata=verbose" },
+              headers: {
+                Accept: "application/json;odata=verbose",
+              },
               signal: abort.signal,
             }
           );
@@ -387,6 +514,7 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
               AccountName: u.LoginName,
               Title: u.Title,
               Department2: u.Department || "",
+              SPUserID: u.Id,
             },
           });
         } catch (err) {
@@ -398,115 +526,99 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
       if (!hydrated.length) return;
 
       setLastResolved(hydrated);
-
       const tags = hydrated.map(toTag);
       setSelectedTags(tags);
 
-      if (onChange) {
-        onChange(hydrated);
-      }
+      // push into GlobalFormData + onChange2
+      commitValue(hydrated);
     })();
 
     return () => abort.abort();
-  }, [ctx.FormMode, ctx.FormData, id, onChange, webUrl]);
+  }, [ctx.FormMode, ctx.FormData, id, commitValue, webUrl]);
 
-  /* ------------------------------------------------
-   * NEW FORM: reset picker state + register GlobalRefs
-   * ------------------------------------------------ */
+  /* ---------------- NEW FORM: reset state clean -------------------- */
 
   React.useEffect(() => {
-    // always register element for this field, like TagPicker does
-    ctx.GlobalRefs(
-      elemRef.current !== null ? elemRef.current : undefined,
-      id
-    );
-
     if (ctx.FormMode === 8) {
-      // New form = start clean
-      setSelectedTags([]);
+      // New form: start from starterValue only & clear resolved cache
+      setSelectedTags(normalizedStarter);
       setLastResolved([]);
+      setError("");
+      if (ctx && ctx.GlobalFormData) {
+        const targetId = `${id}Id`;
+        const starterIds: number[] = [];
+        for (const t of normalizedStarter) {
+          const n = Number(t.key);
+          if (!Number.isNaN(n)) starterIds.push(n);
+        }
+        if (isMulti) {
+          ctx.GlobalFormData(
+            targetId,
+            starterIds.length === 0 ? [] : starterIds
+          );
+        } else {
+          ctx.GlobalFormData(
+            targetId,
+            starterIds.length === 0 ? null : starterIds[0]
+          );
+        }
+      }
     }
-  }, [ctx.FormMode, ctx, id]);
+  }, [ctx, ctx.FormMode, id, isMulti, normalizedStarter]);
 
-  /* ------------------------------------------------
-   * Rendering
-   * ------------------------------------------------ */
+  /* ---------------------- Submitting / disable --------------------- */
 
-  const requiredMsg =
-    requiredEffective && selectedTags.length === 0
-      ? "This field is required."
-      : undefined;
+  React.useEffect(() => {
+    if (isSubmitting === false) {
+      setIsDisabled(!!disabled);
+    } else {
+      setIsDisabled(true);
+    }
+  }, [isSubmitting, disabled]);
 
-  const isDisabled = Boolean(submitting || disabled);
-  const itemLimit = isMulti ? undefined : 1; // v8 TagPicker respects itemLimit
+  /* ----------------------------- Render ---------------------------- */
 
-  const pickerProps = {
-    className,
-    disabled: isDisabled,
-    itemLimit,
-    onResolveSuggestions: (filter: string, selected?: ITag[]) => {
-      const already = selected ?? [];
-      return searchPeople(filter || "").then((tags) =>
-        tags.filter(
-          (t) =>
-            !already.some((s) => String(s.key) === String(t.key))
-        )
-      );
-    },
-    getTextFromItem: (t: ITag) => t.name,
-    selectedItems: selectedTags,
-    onChange: handleChange,
-    pickerSuggestionsProps: suggestionsProps,
-  };
+  const hasError = !!error || (requiredEffective && selectedTags.length === 0);
+  const validationMsg =
+    hasError ? error || REQUIRED_MSG : undefined;
 
-  return displayName ? (
-    <Field
-      label={displayName}
-      hint={description}
-      validationMessage={requiredMsg}
-      validationState={requiredMsg ? "error" : "none"}
+  return (
+    <div
+      ref={elemRef}
+      style={{ display: ctx?.isHidden ? "none" : "block" }}
+      className={className}
     >
-      {/* hidden input purely so GlobalRefs has a DOM element like TagPicker */}
-      <input
-        ref={elemRef}
-        id={id}
-        type="text"
-        style={{
-          position: "absolute",
-          left: "-10000px",
-          width: 0,
-          height: 0,
-          opacity: 0,
-          pointerEvents: "none",
-        }}
-        readOnly
-      />
-      <TagPicker
-        {...pickerProps}
-        inputProps={{ placeholder: placeholder ?? "Search people..." }}
-      />
-    </Field>
-  ) : (
-    <>
-      <input
-        ref={elemRef}
-        id={id}
-        type="text"
-        style={{
-          position: "absolute",
-          left: "-10000px",
-          width: 0,
-          height: 0,
-          opacity: 0,
-          pointerEvents: "none",
-        }}
-        readOnly
-      />
-      <TagPicker
-        {...pickerProps}
-        inputProps={{ placeholder: placeholder ?? "Search people..." }}
-      />
-    </>
+      <Field
+        label={displayName}
+        hint={description}
+        validationMessage={validationMsg}
+        validationState={hasError ? "error" : "none"}
+      >
+        <TagPicker
+          className={className}
+          disabled={isDisabled}
+          onResolveSuggestions={(filter, selected) => {
+            const sel = selected ?? [];
+            if (!filter || !filter.trim()) return [];
+            return searchPeople(filter).then((tags) =>
+              tags.filter(
+                (t) =>
+                  !sel.some(
+                    (s) => String(s.key) === String(t.key)
+                  )
+              )
+            );
+          }}
+          getTextFromItem={(t) => t.name}
+          selectedItems={selectedTags}
+          onChange={handleChange}
+          pickerSuggestionsProps={suggestionsProps}
+          inputProps={{
+            placeholder: placeholder ?? "Search people…",
+          }}
+        />
+      </Field>
+    </div>
   );
 };
 
