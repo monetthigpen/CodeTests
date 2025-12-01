@@ -125,22 +125,30 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
   const apiUrl =
     `${webUrl}/_api/SP.UI.ApplicationPages.ClientPeoplePickerWebServiceInterface.ClientPeoplePickerSearchUser`;
 
-  // ----- starterValue used only for NEW form -----
-  const starterArray: { key: string | number; text: string }[] =
-    Array.isArray(starterValue)
-      ? starterValue
-      : starterValue
-      ? [starterValue]
-      : [];
+  /* ------------------------------------------------------------------ */
+  /* starterValue → initial tags (NEW form only)                        */
+  /* ------------------------------------------------------------------ */
 
-  const normalizedStarter: ITag[] = (isMulti ? starterArray : starterArray.slice(-1)).map(
-    (v) => ({
+  const normalizedStarter: ITag[] = React.useMemo(() => {
+    const baseArray: { key: string | number; text: string }[] =
+      Array.isArray(starterValue)
+        ? starterValue
+        : starterValue
+        ? [starterValue]
+        : [];
+
+    const arr = isMulti ? baseArray : baseArray.slice(-1);
+
+    return arr.map((v) => ({
       key: String(v.key),
       name: v.text,
-    })
-  );
+    }));
+  }, [starterValue, isMulti]);
 
-  // ----- local state -----
+  /* ------------------------------------------------------------------ */
+  /* Local state                                                        */
+  /* ------------------------------------------------------------------ */
+
   const [selectedTags, setSelectedTags] =
     React.useState<ITag[]>(normalizedStarter);
   const [lastResolved, setLastResolved] =
@@ -149,16 +157,16 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
     React.useState<string>("");
   const [error, setError] = React.useState<string>("");
 
-  // local flags (if you later want to hook into form-field rules)
-  const [isDisabledLocal] =
+  // local flags for visibility / disabled styling
+  const [isDisabledLocal, setIsDisabledLocal] =
     React.useState<boolean>(!!disabled);
-  const [isHiddenLocal] =
+  const [isHiddenLocal, setIsHiddenLocal] =
     React.useState<boolean>(false);
 
   const elemRef = React.useRef<HTMLInputElement | null>(null);
 
   /* ------------------------------------------------------------------ */
-  /* Global error handler (matches TagPicker pattern)                    */
+  /* Global error handler (TagPicker pattern)                           */
   /* ------------------------------------------------------------------ */
 
   const reportError = React.useCallback(
@@ -232,7 +240,7 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
   }, [commitValue]);
 
   /* ------------------------------------------------------------------ */
-  /* REST search for NEW form typing                                    */
+  /* Search (REST people API)                                           */
   /* ------------------------------------------------------------------ */
 
   const searchPeople = React.useCallback(
@@ -241,11 +249,14 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
 
       const body = JSON.stringify({
         queryParams: {
+          __metadata: {
+            type: "SP.UI.ApplicationPages.ClientPeoplePickerQueryParameters",
+          },
           AllowEmailAddresses: true,
           AllowMultipleEntities: isMulti,
           AllUrlZones: false,
           MaximumEntitySuggestions: maxSuggestions,
-          PrincipalSource: 1, // all sources
+          PrincipalSource: 1,
           PrincipalType: principalType,
           QueryString: query,
         },
@@ -492,9 +503,9 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
     })();
 
     return () => abort.abort();
-    // intentionally not depending on ctx.* to avoid re-runs / loops
+    // run once for this field; don't depend on ctx to avoid loops
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // run once per form render
+  }, [id, webUrl, onChange2]);
 
   /* ------------------------------------------------------------------ */
   /* NEW FORM: reset state so search behaves normally                   */
@@ -502,16 +513,20 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
 
   React.useEffect(() => {
     if (ctx.FormMode === 8) {
-      // new form
+      // New form – initialise with starter tags, clear errors
       setSelectedTags(normalizedStarter);
       setLastResolved([]);
       setDisplayOverride("");
       setError("");
+      setIsDisabledLocal(!!disabled);
+      setIsHiddenLocal(false);
+
       ctx.GlobalRefs(
         elemRef.current !== null ? elemRef.current : undefined
       );
     }
-  }, [ctx.FormMode, normalizedStarter, ctx]);
+    // IMPORTANT: no `ctx` object in deps → avoids loop when context updates
+  }, [ctx.FormMode, normalizedStarter, disabled, ctx.GlobalRefs]);
 
   /* ------------------------------------------------------------------ */
   /* Rendering                                                          */
@@ -522,6 +537,7 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
       ? "This field is required."
       : undefined;
 
+  const hasError = error || requiredMsg;
   const disabledFinal = Boolean(
     submitting || disabled || isDisabledLocal
   );
@@ -530,8 +546,8 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
     <Field
       label={displayName}
       hint={description}
-      validationMessage={error || requiredMsg}
-      validationState={error || requiredMsg ? "error" : "none"}
+      validationMessage={hasError}
+      validationState={hasError ? "error" : "none"}
       style={{ display: isHiddenLocal ? "none" : "block" }}
     >
       <TagPicker
@@ -557,10 +573,11 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
         inputProps={{
           placeholder: placeholder ?? "Search people…",
           onBlur: handleBlur,
+          // TagPicker's input is not strongly typed, so cast
           ref: elemRef as any,
         }}
       />
-      {/* Optional display of joined names if you still want it */}
+
       {displayOverride && (
         <div style={{ marginTop: 4, fontSize: 12, opacity: 0.7 }}>
           {displayOverride}
@@ -571,6 +588,7 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
 };
 
 export default PeoplePicker;
+
 
 
 
