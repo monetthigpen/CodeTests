@@ -121,6 +121,7 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
     spHttpClientConfig,
   } = props;
 
+  // *** wrapper div matches TagPicker pattern for GlobalRefs ***
   const elemRef = React.useRef<HTMLDivElement | null>(null);
 
   // local error message (mirrors GlobalErrorHandle like TagPicker)
@@ -166,12 +167,14 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
     [ctx, id]
   );
 
-  // Register DOM ref globally (focus / validation)
+  // *** GlobalRefs: exact pattern as TagPicker – call once with DOM element ***
   React.useEffect(() => {
     if (ctx.GlobalRefs) {
-      ctx.GlobalRefs(elemRef.current ?? undefined);
+      ctx.GlobalRefs(
+        elemRef.current !== null ? elemRef.current : undefined
+      );
     }
-  }, [ctx]);
+  }, []); // <- important: no ctx dependency, runs once like your reference code
 
   /* ------------------------------------------------------------------ */
   /* Search (REST people API)                                           */
@@ -497,21 +500,24 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
     />
   );
 
-  return displayName ? (
-    <Field
-      ref={elemRef as any}
-      label={displayName}
-      hint={description}
-      validationMessage={validationMsg}
-      validationState={validationState as any}
-    >
-      {picker}
-    </Field>
-  ) : (
-    <div ref={elemRef}>{picker}</div>
+  // *** wrapper div carries the ref used by GlobalRefs ***
+  return (
+    <div ref={elemRef}>
+      {displayName ? (
+        <Field
+          label={displayName}
+          hint={description}
+          validationMessage={validationMsg}
+          validationState={validationState as any}
+        >
+          {picker}
+        </Field>
+      ) : (
+        picker
+      )}
+    </div>
   );
 };
 
 export default PeoplePicker;
-
 
