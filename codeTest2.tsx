@@ -1,35 +1,27 @@
-
-
-// --- People-picker specific state ---
-const [touched, setTouched] = React.useState<boolean>(false);
-const [errorMsg, setErrorMsg] = React.useState<string | undefined>();
-
-
-
-/**
- * ITag[] -> PickerEntity[]
- * This is the section that was giving you trouble.
- */
 const handleChange = React.useCallback(
   (items?: ITag[]) => {
     const next = items ?? [];
 
-    // See exactly what TagPicker is giving us
-    console.log("PeoplePicker onChange ITag[]:", next);
-
+    // update what TagPicker shows
     setSelectedTags(next);
-    setTouched(true);
 
-    const err = validate(next);
-    reportError(err);
+    // ----- validate + send to GlobalErrorHandle -----
+    const err =
+      requiredEffective && next.length === 0
+        ? "This field is required."
+        : "";
+    const targetId = `${id}Id`;
+    ctx.GlobalErrorHandle(targetId, err || undefined);
 
-    if (!onChange2) {
+    // If no parent onChange was passed, we're done
+    if (!onChange) {
       return;
     }
 
+    // ----- map ITag[] -> PickerEntity[] -----
     const result: PickerEntity[] = [];
 
-    // Build quick lookup from last resolved entities using SAME key logic as toTag
+    // build lookup from lastResolved using the SAME key logic as toTag()
     const resolvedByKey = new Map<string, PickerEntity>();
     for (const e of lastResolved) {
       const rawKey =
@@ -43,47 +35,33 @@ const handleChange = React.useCallback(
       resolvedByKey.set(String(rawKey).toLowerCase(), e);
     }
 
-    if (resolvedByKey.size > 0) {
-      // Normal path: map each tag back to a fully-hydrated entity
-      for (const t of next) {
-        const lk = String(t.key).toLowerCase();
-        const hit = resolvedByKey.get(lk);
+    // now map each selected tag back to its entity
+    for (const t of next) {
+      const lk = String(t.key).toLowerCase();
+      const ent = resolvedByKey.get(lk);
 
-        if (hit) {
-          result.push(hit);
-        } else {
-          // Fallback entity if for some reason it wasn't in lastResolved
-          result.push({
-            Key: String(t.key),
-            DisplayText: t.name,
-            IsResolved: false,
-            EntityType: "User",
-            EntityData2: {
-              Email: /@/.test(String(t.key)) ? String(t.key) : undefined,
-            },
-          });
-        }
-      }
-    } else {
-      // Safety net: if lastResolved is empty, still return something based only on ITag
-      for (const t of next) {
+      if (ent) {
+        result.push(ent);
+      } else {
+        // safety fallback: still return something built only from the tag
         result.push({
           Key: String(t.key),
           DisplayText: t.name,
           IsResolved: false,
           EntityType: "User",
-          EntityData2: {
-            Email: /@/.test(String(t.key)) ? String(t.key) : undefined,
-          },
+          EntityData2: /@/.test(String(t.key))
+            ? { Email: String(t.key) }
+            : undefined,
         });
       }
     }
 
-    console.log("PeoplePicker onChange -> PickerEntity[]:", result);
-    onChange2(result);
+    // finally notify your original consumer
+    onChange(result);
   },
-  [lastResolved, onChange2, reportError, validate]
+  [ctx, id, requiredEffective, lastResolved, onChange]
 );
+
 
 
 
