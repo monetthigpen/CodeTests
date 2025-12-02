@@ -1,62 +1,125 @@
+// PeoplePickerComponent.tsx
 import * as React from "react";
 import {
   TagPicker,
+  TagPickerList,
   TagPickerInput,
-  makeStyles,
-  shorthands,
-  tokens,
-  ITag
+  TagPickerControl,
+  TagPickerGroup,
+  TagPickerOption,
+  TagPickerProps,
+  useTagPickerFilter,
+  Tag,
+  Field,
+  Textarea,
 } from "@fluentui/react-components";
 
-import { DynamicFormContext } from "../KS/DynamicFormKS";
+import { DynamicFormContext } from "./DynamicFormContext";
+import { formFieldsSetup, FormFieldsProps } from "../utils/formFieldBased";
 
-// ---------- CONSTANTS ----------
-const REQUIRED_MSG = "This field is required";
+// ---------- Types ----------
 
-// ---------- STYLES ----------
-const useStyles = makeStyles({
-  root: {
-    display: "flex",
-    flexDirection: "column",
-    ...shorthands.gap(tokens.spacingVerticalXXS),
-  },
-});
+export type PrincipalType = 0 | 1 | 2 | 4 | 8 | 15;
 
-// ---------- PickerEntity Type ----------
 export interface PickerEntity {
-  Key: string;
-  DisplayText: string;
-  EntityData: {
+  Key: string; // SharePoint user Id as string
+  DisplayText?: string;
+  EntityType?: string;
+  IsResolved?: boolean;
+  EntityData?: {
     Email?: string;
-    SPUserID: number;
+    AccountName?: string;
+    Title?: string;
+    Department?: string;
   };
-  EntityType: "User";
 }
 
-// ---------- Component Props ----------
 export interface PeoplePickerProps {
   id: string;
-  displayName: string;
+
+  displayName?: string;
   className?: string;
   description?: string;
   placeholder?: string;
-  isRequired?: boolean;
-  disabled?: boolean;
-  multiselect?: boolean;
-  submitting?: boolean;
-  principalType?: number;
-  maxSuggestions?: number;
-  starterValue?: number | number[];
 
-  // Fluent UI / SPFx dependencies
-  spHttpClient: any;
-  spHttpClientConfig: any;
+  isRequired?: boolean;
+  isRequired2?: boolean;
+  submitting?: boolean;
+
+  multiselect?: boolean;
+  disabled?: boolean;
+
+  // Starter value: numeric user Id(s) – exactly what SP stores in the *Id field
+  // e.g. { key: 50, text: 'Ada Lovelace' } or array of those
+  starterValue?: { key: string | number; text: string } | Array<{
+    key: string | number;
+    text: string;
+  }>;
+
+  // People picker knobs
+  principalType?: PrincipalType; // default 1 (User)
+  maxSuggestions?: number; // default 5
+
+  // Optional SPFx HTTP client – if not provided, falls back to classic fetch+digest
+  spHttpClient?: any;
+  spHttpClientConfig?: any;
 }
 
-// =========================================================
-//                     PeoplePicker Component
-// =========================================================
+// ---------- Constants & helpers ----------
+
+const REQUIRED_MSG = "This is a required field and cannot be blank!";
+
+const normalizeStarterArray = (
+  starter?: PeoplePickerProps["starterValue"]
+): Array<{ key: string; text: string }> => {
+  if (!starter) return [];
+  if (Array.isArray(starter)) {
+    return starter.map((s) => ({
+      key: String(s.key),
+      text: s.text,
+    }));
+  }
+  return [
+    {
+      key: String(starter.key),
+      text: starter.text,
+    },
+  ];
+};
+
+// convert a PickerEntity into a simple display label
+const entityToLabel = (e: PickerEntity): string => {
+  return (
+    e.DisplayText ||
+    e.EntityData?.Title ||
+    e.EntityData?.Email ||
+    e.EntityData?.AccountName ||
+    e.Key
+  );
+};
+
+// collect numeric Ids (SPUserId) from SP form data (array or delimited string)
+const collectUserIdsFromRaw = (rawValue: any): number[] => {
+  if (rawValue == null) return [];
+
+  if (Array.isArray(rawValue)) {
+    return rawValue
+      .map((v) => Number(v))
+      .filter((id) => !Number.isNaN(id) && id > 0);
+  }
+
+  const str = String(rawValue);
+  return str
+    .split(/[;,#]/)
+    .map((p) => Number(p.trim()))
+    .filter((id) => !Number.isNaN(id) && id > 0);
+};
+
+// ---------- Component ----------
+
 const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
+  const ctx = React.useContext(DynamicFormContext);
+
   const {
     id,
     displayName,
@@ -64,219 +127,599 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
     description,
     placeholder,
     isRequired,
+    isRequired2,
+    submitting,
+    multiselect,
     disabled,
-    multiselect = false,
     principalType = 1,
     maxSuggestions = 5,
-    starterValue,
     spHttpClient,
     spHttpClientConfig,
   } = props;
 
-  const ctx = React.useContext(DynamicFormContext);
-  const styles = useStyles();
+  const isMulti = multiselect === true;
+  const requiredEffective = (isRequired ?? isRequired2) ?? false;
 
-  // ---------- Form Mode ----------
-  const mode = ctx.FormMode; // 4=view, 6=edit, 8=new
-  const isView = mode === 4;
-  const isEdit = mode === 6;
-  const isNew = mode === 8;
+  const webUrl =
+    "https://amerihealthcaritas.sharepoint.com/sites/eokm"; // <-- adjust if needed
 
-  // ---------- Component State ----------
-  const [query, setQuery] = React.useState("");
-  const [touched, setTouched] = React.useState(false);
+  // UI state – mirrors TagPickerComponent
+  const [query, setQuery] = React.useState<string>("");
   const [selectedOptions, setSelectedOptions] = React.useState<string[]>([]);
-  const [options, setOptions] = React.useState<Map<string, PickerEntity>>(new Map());
+  const [isDisabled, setIsDisabled] = React.useState<boolean>(!!disabled);
+  const [defaultDisable, setDefaultDisable] = React.useState<boolean>(false);
+  const [isHidden, setIsHidden] = React.useState<boolean>(false);
+  const [touched, setTouched] = React.useState<boolean>(false);
+  const [errorMsg, setErrorMsg] = React.useState<string>("");
+  const [displayOverride, setDisplayOverride] = React.useState<string>("");
 
-  // ---------- Global Refs ----------
-  const errRef = ctx.setGlobalError(id);
-  const valueRef = ctx.setGlobalRef(id);
+  // Suggestions from the PeoplePicker API
+  const [options, setOptions] = React.useState<string[]>([]);
 
-  // ---------- Commit Value to GlobalFormData ----------
-  const commitValue = React.useCallback(() => {
-    const entities: PickerEntity[] = selectedOptions
-      .map((key) => options.get(key))
-      .filter((v): v is PickerEntity => !!v);
+  // Last resolved entities (from search or hydration) – used for Id mapping
+  const [lastResolved, setLastResolved] = React.useState<PickerEntity[]>([]);
 
-    // Required validation
-    if (isRequired && entities.length === 0) {
-      errRef(REQUIRED_MSG);
-    } else {
-      errRef("");
-    }
+  // ref to hidden input – used by GlobalRefs & for submission compatibility
+  const elemRef = React.useRef<HTMLInputElement | null>(null);
 
-    valueRef(entities);
-  }, [selectedOptions, options, isRequired, errRef, valueRef]);
+  // ---------- Validation / Global error handling ----------
 
-  // =========================================================
-  //                  SEARCH PEOPLE FROM SP
-  // =========================================================
-  const searchPeople = React.useCallback(
-    async (value: string): Promise<PickerEntity[]> => {
-      if (!value || value.length < 1) return [];
-
-      const url = `${ctx.WebUrl}/_api/SP.UI.ApplicationPages.ClientPeoplePickerWebServiceInterface.ClientPeoplePickerSearchUser`;
-
-      const body = {
-        queryParams: {
-          QueryString: value,
-          MaximumEntitySuggestions: maxSuggestions,
-          AllowEmailAddresses: true,
-          AllowOnlyEmailAddresses: false,
-          PrincipalType: principalType,
-          PrincipalSource: 15,
-        },
-      };
-
-      const response = await spHttpClient.post(url, spHttpClientConfig, {
-        body: JSON.stringify(body),
-      });
-      const json = await response.json();
-
-      if (!json || !json.d || !json.d.ClientPeoplePickerSearchUser) return [];
-
-      const parsed = JSON.parse(json.d.ClientPeoplePickerSearchUser) as any[];
-
-      const mapped: PickerEntity[] = parsed.map((p) => ({
-        Key: String(p.EntityData?.SPUserID ?? p.Key),
-        DisplayText: p.DisplayText,
-        EntityType: "User",
-        EntityData: {
-          Email: p.EntityData?.Email,
-          SPUserID: Number(p.EntityData?.SPUserID ?? p.Key),
-        },
-      }));
-
-      return mapped;
+  const reportError = React.useCallback(
+    (msg: string) => {
+      const targetId = `${id}Id`;
+      setErrorMsg(msg || "");
+      ctx.GlobalErrorHandle(targetId, msg || undefined);
     },
-    [ctx.WebUrl, maxSuggestions, principalType, spHttpClient, spHttpClientConfig]
+    [ctx, id]
   );
 
-  // =========================================================
-  //             HYDRATE STARTER VALUE (Edit/View)
-  // =========================================================
-  React.useEffect(() => {
-    if ((isEdit || isView) && starterValue) {
-      const ids = Array.isArray(starterValue) ? starterValue : [starterValue];
+  const validate = React.useCallback((): string => {
+    if (!requiredEffective) return "";
+    if (selectedOptions.length === 0) return REQUIRED_MSG;
+    return "";
+  }, [requiredEffective, selectedOptions.length]);
 
-      const loadValues = async () => {
-        const allLoaded: PickerEntity[] = [];
+  // ---------- Utilities for mapping names <-> entities / Ids ----------
 
-        for (const id of ids) {
-          const results = await searchPeople(String(id));
-          const match = results.find((r) => Number(r.EntityData.SPUserID) === Number(id));
-          if (match) allLoaded.push(match);
-        }
-
-        if (allLoaded.length > 0) {
-          const newMap = new Map<string, PickerEntity>();
-          const newKeys: string[] = [];
-
-          for (const ent of allLoaded) {
-            newMap.set(ent.Key, ent);
-            newKeys.push(ent.Key);
-          }
-
-          setOptions(newMap);
-          setSelectedOptions(newKeys);
-          valueRef(allLoaded);
-        }
-      };
-
-      loadValues();
+  const resolvedByLabel = React.useMemo(() => {
+    const map = new Map<string, PickerEntity>();
+    for (const e of lastResolved) {
+      const label = entityToLabel(e);
+      if (label) {
+        map.set(label.toLowerCase(), e);
+      }
     }
-  }, [isEdit, isView, starterValue, searchPeople, valueRef]);
+    return map;
+  }, [lastResolved]);
 
-  // =========================================================
-  //               RESOLVE SUGGESTIONS FOR PICKER
-  // =========================================================
-  const onResolveSuggestions = React.useCallback(
-    async (filter: string, selected: ITag[]) => {
-      if (!filter) return [];
+  const getUserIdsFromSelection = React.useCallback((): number[] => {
+    const ids: number[] = [];
+    for (const label of selectedOptions) {
+      const e = resolvedByLabel.get(label.toLowerCase());
+      if (!e) continue;
+      const num = Number(e.Key);
+      if (!Number.isNaN(num) && num > 0) {
+        ids.push(num);
+      }
+    }
+    return ids;
+  }, [selectedOptions, resolvedByLabel]);
 
-      const results = await searchPeople(filter);
+  // ---------- Search (PeoplePicker Web Service) ----------
 
-      const transformed: ITag[] = results.map((r) => {
-        return {
-          key: r.Key,
-          name: r.DisplayText,
-        };
+  const searchPeople = React.useCallback(
+    async (queryText: string): Promise<string[]> => {
+      const trimmed = queryText.trim();
+      if (!trimmed) {
+        return [];
+      }
+
+      const apiUrl = `${webUrl}/_api/SP.UI.ApplicationPages.ClientPeoplePickerWebServiceInterface.clientPeoplePickerSearchUser`;
+
+      const body = JSON.stringify({
+        queryParams: {
+          __metadata: {
+            type:
+              "SP.UI.ApplicationPages.ClientPeoplePickerQueryParameters",
+          },
+          AllowEmailAddresses: true,
+          AllowMultipleEntities: isMulti,
+          AllUrlZones: false,
+          MaximumEntitySuggestions: maxSuggestions,
+          PrincipalSource: 1,
+          PrincipalType: principalType,
+          QueryString: trimmed,
+        },
       });
 
-      return transformed.filter(
-        (t) => !selected.some((s) => String(s.key) === String(t.key))
+      try {
+        let resp: Response;
+
+        if (spHttpClient && spHttpClientConfig) {
+          resp = await spHttpClient.post(apiUrl, spHttpClientConfig, {
+            headers: {
+              Accept: "application/json;odata=verbose",
+              "Content-Type": "application/json;odata=verbose",
+              "odata-version": "3.0",
+            },
+            body,
+          });
+        } else {
+          const digest =
+            (document.getElementById(
+              "__REQUESTDIGEST"
+            ) as HTMLInputElement | null)?.value || "";
+
+          resp = await fetch(apiUrl, {
+            method: "POST",
+            headers: {
+              Accept: "application/json;odata=verbose",
+              "Content-Type": "application/json;odata=verbose",
+              "X-RequestDigest": digest,
+              "odata-version": "3.0",
+            },
+            body,
+            credentials: "same-origin",
+          });
+        }
+
+        if (!resp.ok) {
+          const txt = await resp.text().catch(() => "");
+          console.error(
+            "PeoplePicker search error",
+            resp.status,
+            resp.statusText,
+            txt
+          );
+          return [];
+        }
+
+        const json: any = await resp.json();
+        const raw = json.d?.ClientPeoplePickerSearchUser ?? "[]";
+        const entities: PickerEntity[] = JSON.parse(raw);
+
+        setLastResolved(entities);
+
+        const labels = entities
+          .map(entityToLabel)
+          .filter((s) => !!s) as string[];
+
+        setOptions(labels);
+        return labels;
+      } catch (e) {
+        console.error("PeoplePicker search exception", e);
+        return [];
+      }
+    },
+    [
+      webUrl,
+      isMulti,
+      maxSuggestions,
+      principalType,
+      spHttpClient,
+      spHttpClientConfig,
+    ]
+  );
+
+  // ---------- TagPicker filter children (same pattern as TagPickerComponent) ----------
+
+  const noMatchText = "We couldn't find any matches";
+
+  const children = useTagPickerFilter({
+    query,
+    options,
+    noOptionsElement: (
+      <TagPickerOption value="no-matches">{noMatchText}</TagPickerOption>
+    ),
+    filter: (option: string) =>
+      !selectedOptions.includes(option) &&
+      option.toLowerCase().includes(query.toLowerCase()),
+  });
+
+  // ---------- Commit value to GlobalFormData ----------
+
+  const commitValue = React.useCallback(() => {
+    const err = validate();
+    reportError(err);
+
+    const targetId = `${id}Id`;
+    const userIds = getUserIdsFromSelection();
+
+    if (isMulti) {
+      ctx.GlobalFormData(targetId, userIds.length === 0 ? [] : userIds);
+    } else {
+      ctx.GlobalFormData(
+        targetId,
+        userIds.length === 0 ? null : userIds[0]
       );
+    }
+
+    const labels = selectedOptions;
+    setDisplayOverride(labels.join("; "));
+    ctx.GlobalRefs(
+      elemRef.current !== null ? elemRef.current : undefined,
+      id
+    );
+  }, [
+    ctx,
+    id,
+    isMulti,
+    selectedOptions,
+    getUserIdsFromSelection,
+    reportError,
+    validate,
+  ]);
+
+  // ---------- TagPicker event handlers ----------
+
+  const onOptionSelect: TagPickerProps["onOptionSelect"] = React.useCallback(
+    (_ev: React.SyntheticEvent, data: any) => {
+      const value = data?.value as string | undefined;
+      const nextSelected: string[] = data?.selectedOptions ?? [];
+
+      if (touched) {
+        const err = validate();
+        reportError(err);
+      }
+
+      if (value === "no-matches") {
+        return;
+      }
+
+      if (isMulti) {
+        // multi: TagPicker already tracks all selected options for us
+        setSelectedOptions(nextSelected);
+      } else {
+        // single: enforce one option only
+        if (value != null && value !== "") {
+          setSelectedOptions([value]);
+        } else if (nextSelected.length > 0) {
+          setSelectedOptions([nextSelected[0]]);
+        } else {
+          setSelectedOptions([]);
+        }
+      }
+
+      setQuery("");
+    },
+    [isMulti, reportError, touched, validate]
+  );
+
+  const handleInputChange = React.useCallback(
+    async (ev: React.ChangeEvent<HTMLInputElement>) => {
+      const val = ev.target.value;
+      setQuery(val);
+      await searchPeople(val);
     },
     [searchPeople]
   );
 
-  // =========================================================
-  //                  SINGLE + MULTI SELECT LOGIC
-  // =========================================================
-  const onOptionSelect = React.useCallback(
-    (
-      e: React.MouseEvent | React.KeyboardEvent,
-      data: { selectedOptions: string[] }
-    ) => {
-      if (multiselect) {
-        setSelectedOptions(data.selectedOptions);
-      } else {
-        const single = data.selectedOptions.length > 0 ? data.selectedOptions[0] : "";
-        setSelectedOptions(single ? [single] : []);
-      }
-
-      setTouched(true);
-    },
-    [multiselect]
-  );
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setQuery(value);
-  };
-
-  const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+  const handleBlur = React.useCallback((): void => {
     setTouched(true);
     commitValue();
-  };
+  }, [commitValue]);
 
-  // =========================================================
-  //                          RENDERING
-  // =========================================================
-  const selectedTags: ITag[] = selectedOptions
-    .map((k) => options.get(k))
-    .filter((p): p is PickerEntity => !!p)
-    .map((p) => ({
-      key: p.Key,
-      name: p.DisplayText,
-    }));
+  // ---------- Submitting: disable & lock display text (same pattern as TagPicker) ----------
+
+  React.useEffect(() => {
+    if (!submitting && !defaultDisable) {
+      // Form no longer submitting – re-enable if not default-disabled
+      setIsDisabled(false);
+      return;
+    }
+
+    if (submitting) {
+      setIsDisabled(true);
+      const labels = selectedOptions;
+      setDisplayOverride(labels.join("; "));
+
+      const next = selectedOptions;
+      const err =
+        requiredEffective && next.length === 0 ? REQUIRED_MSG : "";
+      reportError(err);
+    }
+  }, [submitting, defaultDisable, selectedOptions, reportError, requiredEffective]);
+
+  // ---------- Initial render / defaults / Edit / View hydration ----------
+
+  React.useEffect(() => {
+    ctx.GlobalRefs(
+      elemRef.current !== null ? elemRef.current : undefined,
+      id
+    );
+
+    // NEW FORM (8): use starterValue only
+    if (ctx.FormMode === 8) {
+      const starterArr = normalizeStarterArray(props.starterValue);
+      const labels = starterArr.map((s) => s.text);
+      setSelectedOptions(labels);
+      setLastResolved(
+        starterArr.map((s) => ({
+          Key: String(s.key),
+          DisplayText: s.text,
+          IsResolved: true,
+          EntityType: "User",
+        }))
+      );
+      return;
+    }
+
+    // EDIT (6) / VIEW (4): hydrate from SPUserId values in ctx.FormData
+    if (ctx.FormMode !== 4 && ctx.FormMode !== 6) {
+      return;
+    }
+
+    const formData: any = ctx.FormData;
+    if (!formData) return;
+
+    const fieldInternalName = id;
+
+    const idProp = `${fieldInternalName}Id`;
+    const stringIdProp = `${fieldInternalName}IdStringId`;
+
+    let rawValue = formData[idProp];
+    if (rawValue === undefined || rawValue === null) {
+      rawValue = formData[stringIdProp];
+    }
+    if (rawValue === undefined || rawValue === null) {
+      return;
+    }
+
+    const numericIds = collectUserIdsFromRaw(rawValue);
+    if (!numericIds.length) return;
+
+    const abort = new AbortController();
+
+    (async () => {
+      const hydrated: PickerEntity[] = [];
+
+      for (const userId of numericIds) {
+        try {
+          const resp = await fetch(
+            `${webUrl}/_api/web/getUserById(${userId})`,
+            {
+              method: "GET",
+              headers: {
+                Accept: "application/json;odata=verbose",
+              },
+              signal: abort.signal,
+            }
+          );
+
+          if (!resp.ok) {
+            console.warn(
+              "PeoplePicker getUserById failed",
+              userId,
+              resp.status,
+              resp.statusText
+            );
+            continue;
+          }
+
+          const json: any = await resp.json();
+          const u = json.d;
+
+          hydrated.push({
+            Key: String(u.Id),
+            DisplayText: u.Title,
+            IsResolved: true,
+            EntityType: "User",
+            EntityData: {
+              Email: u.Email,
+              AccountName: u.LoginName,
+              Title: u.Title,
+              Department: u.Department || "",
+            },
+          });
+        } catch (err) {
+          if (abort.signal.aborted) return;
+          console.error("PeoplePicker getUserById error", err);
+        }
+      }
+
+      if (!hydrated.length) return;
+
+      setLastResolved(hydrated);
+      const labels = hydrated.map(entityToLabel);
+      setSelectedOptions(labels);
+    })();
+
+    return () => abort.abort();
+  }, [ctx.FormMode, ctx.FormData, ctx.GlobalRefs, id, props.starterValue, webUrl]);
+
+  // ---------- Disable / hidden logic (same as TagPicker) ----------
+
+  React.useEffect(() => {
+    // Display form: always disabled, just show text
+    if (ctx.FormMode === 4) {
+      setIsDisabled(true);
+      const labels = selectedOptions;
+      setDisplayOverride(labels.join("; "));
+      reportError("");
+      setTouched(false);
+      return;
+    }
+
+    // Edit / New: consult formFieldsSetup to see if this field is disabled/hidden
+    const formFieldProps: FormFieldsProps = {
+      disabledList: ctx.AllDisableFields,
+      hiddenList: ctx.AllHiddenFields,
+      userBasedList: ctx.userBasedPerms,
+      curUserList: ctx.curUserInfo,
+      curField: id,
+      formStateData: ctx.FormData,
+      listColumns: ctx.listCols,
+    };
+
+    const results = formFieldsSetup(formFieldProps);
+    if (results.length > 0) {
+      const r = results[0];
+      if (r.isDisabled !== undefined) {
+        setIsDisabled(r.isDisabled);
+        setDefaultDisable(r.isDisabled);
+      }
+      if (r.isHidden !== undefined) {
+        setIsHidden(r.isHidden);
+      }
+    }
+
+    if (isDisabled) {
+      const labels = selectedOptions;
+      setDisplayOverride(labels.join("; "));
+    }
+
+    reportError("");
+    setTouched(false);
+  }, [
+    ctx.FormMode,
+    ctx.AllDisableFields,
+    ctx.AllHiddenFields,
+    ctx.userBasedPerms,
+    ctx.curUserInfo,
+    ctx.FormData,
+    ctx.listCols,
+    id,
+    isDisabled,
+    selectedOptions,
+    reportError,
+  ]);
+
+  // ---------- Derived view values ----------
+
+  const selectedLabels = selectedOptions;
+  const joinedText = selectedLabels.join("; ");
+  const visibleText = displayOverride || joinedText;
+  const triggerText = visibleText || "";
+  const triggerPlaceholder = triggerText || (placeholder || "");
+
+  const hasError = !!errorMsg;
+  const disabledClass = isDisabled ? "is-disabled" : "";
+  const rootClassName = [className, disabledClass].filter(Boolean).join(" ");
+
+  // remove one selected option (used when clicking an existing tag)
+  const onTagClick = React.useCallback(
+    (option: string): void => {
+      const remainderOpts = selectedOptions.filter((o) => o !== option);
+      setSelectedOptions(remainderOpts);
+
+      const targetId = `${id}Id`;
+      const userIds =
+        remainderOpts.length === 0
+          ? []
+          : (() => {
+              const ids: number[] = [];
+              for (const label of remainderOpts) {
+                const e = resolvedByLabel.get(label.toLowerCase());
+                if (!e) continue;
+                const num = Number(e.Key);
+                if (!Number.isNaN(num) && num > 0) ids.push(num);
+              }
+              return ids;
+            })();
+
+      if (isMulti) {
+        ctx.GlobalFormData(targetId, userIds.length === 0 ? [] : userIds);
+      } else {
+        ctx.GlobalFormData(
+          targetId,
+          userIds.length === 0 ? null : userIds[0]
+        );
+      }
+
+      const labels = remainderOpts;
+      setDisplayOverride(labels.join("; "));
+      ctx.GlobalRefs(
+        elemRef.current !== null ? elemRef.current : undefined,
+        id
+      );
+    },
+    [ctx, id, isMulti, selectedOptions, resolvedByLabel]
+  );
+
+  // ---------- Render ----------
 
   return (
-    <div className={styles.root}>
-      <label>{displayName}</label>
-
-      <TagPicker
-        className={className}
-        disabled={disabled || isView}
-        selectedOptions={selectedOptions}
-        onOptionSelect={onOptionSelect}
+    <div
+      style={{ display: isHidden ? "none" : "block" }}
+      className="fieldClass"
+      aria-disabled={isDisabled ? "true" : undefined}
+      data-disabled={isDisabled ? "true" : undefined}
+    >
+      <Field
+        label={displayName}
+        id={id}
+        {...(requiredEffective && { required: true })}
+        validationMessage={hasError ? errorMsg : undefined}
+        validationState={hasError ? "error" : undefined}
       >
-        <TagPickerInput
-          aria-label={displayName}
-          value={query}
-          placeholder={placeholder ?? "Search people..."}
-          onChange={handleInputChange}
-          onBlur={handleBlur}
-        />
-      </TagPicker>
+        {isDisabled ? (
+          // Disabled Input to retain gray-out visuals and keep text visible
+          <Textarea
+            id={id}
+            disabled
+            value={triggerText}
+            placeholder={triggerPlaceholder}
+            className={rootClassName}
+            aria-disabled="true"
+            data-disabled="true"
+          />
+        ) : (
+          <TagPicker
+            size="medium"
+            onOptionSelect={onOptionSelect}
+            selectedOptions={selectedOptions}
+            inline={true}
+            positioning="below-end"
+          >
+            <TagPickerControl aria-label={displayName}>
+              <TagPickerGroup aria-label={displayName}>
+                {selectedOptions.map((option) => (
+                  <Tag
+                    key={option}
+                    shape="rounded"
+                    value={option}
+                    className="lookupTags"
+                    onClick={() => onTagClick(option)}
+                  >
+                    {option}
+                  </Tag>
+                ))}
+              </TagPickerGroup>
 
-      {description && <small>{description}</small>}
+              <TagPickerInput
+                aria-label={displayName}
+                value={query}
+                onChange={handleInputChange}
+                onBlur={handleBlur}
+              />
+            </TagPickerControl>
+
+            {/* tagpickerList class is used to add z-index to drop down list */}
+            <TagPickerList className="tagpickerList">
+              {children}
+            </TagPickerList>
+          </TagPicker>
+        )}
+
+        {/* Hidden input field so that all selected options are added to an element
+            which can be used later to get the text values for submission */}
+        <input
+          style={{ display: "none" }}
+          id={id}
+          value={triggerText}
+          ref={elemRef}
+          readOnly
+        />
+      </Field>
+
+      {description && (
+        <div className="descriptionText">{description}</div>
+      )}
     </div>
   );
 };
 
 export default PeoplePicker;
-
 
 
 
