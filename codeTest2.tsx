@@ -5,19 +5,6 @@ const handleChange = React.useCallback(
     // update what TagPicker shows
     setSelectedTags(next);
 
-    // ----- validate + send to GlobalErrorHandle -----
-    const err =
-      requiredEffective && next.length === 0
-        ? "This field is required."
-        : "";
-    const targetId = `${id}Id`;
-    ctx.GlobalErrorHandle(targetId, err || undefined);
-
-    // If no parent onChange was passed, we're done
-    if (!onChange) {
-      return;
-    }
-
     // ----- map ITag[] -> PickerEntity[] -----
     const result: PickerEntity[] = [];
 
@@ -43,20 +30,33 @@ const handleChange = React.useCallback(
       if (ent) {
         result.push(ent);
       } else {
-        // safety fallback: still return something built only from the tag
+        // safety fallback: still return something built on the tag
         result.push({
           Key: String(t.key),
           DisplayText: t.name,
           IsResolved: false,
           EntityType: "User",
-          EntityData2: /@/.test(String(t.key))
+          EntityData2: /@test(String(t.key))
             ? { Email: String(t.key) }
             : undefined,
         });
       }
     }
 
-    // finally notify your original consumer
+    // ===== NEW: convert PickerEntity[] -> numeric user IDs =====
+    const userIds = getUserIds(result);
+
+    // ----- validate + send to GlobalErrorHandle using IDs -----
+    const err = validate(userIds);
+    const targetId = `${id}Id`;
+    ctx.GlobalErrorHandle(targetId, err || undefined);
+
+    // If no parent onChange was passed, we're done
+    if (!onChange) {
+      return;
+    }
+
+    // finally notify your original consumer with the entities
     onChange(result);
   },
   [ctx, id, requiredEffective, lastResolved, onChange]
