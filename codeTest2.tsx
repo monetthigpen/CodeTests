@@ -1,27 +1,23 @@
-React.useEffect(() => {
+<TagPickerList className="tagpickerList">
+  {React.Children.map(children, (child) => {
+    if (!React.isValidElement(child)) return child;
 
-   // When submitting ends, re-enable if this field was not default-disabled
-   if (!submitting && !defaultDisable) {
-      setIsDisabled(false);
-      return;
-   }
+    // get the value prop (DisplayText) from the TagPickerOption
+    const val = (child.props as any).value as string | undefined;
+    if (!val || val === "no-matches") return child;
 
-   if (submitting) {
-      // Disable while submitting
-      setIsDisabled(true);
+    // find the matching entity so we can grab the Title (position)
+    const ent = optionRaw.find(
+      (v) => v.DisplayText.toLowerCase() === val.toLowerCase()
+    );
+    const role = ent?.EntityData?.Title ?? "";
 
-      // Build visible label text
-      const labels = selectedOptions.map(o => o.DisplayText ?? o.text ?? '');
-      setDisplayOverride(labels.join('; '));
-   }
-
-   // Validate after label update
-   const next = selectedOptions ?? [];
-   const isReq = props.isRequired ?? false;
-   const msg = isReq && next.length === 0 ? REQUIRED_MSG : '';
-   reportError(msg);
-
-}, [submitting, defaultDisable]);  // ONLY these two deps
+    // add the secondary line (position) and keep everything else the same
+    return React.cloneElement(child, {
+      secondaryContent: role,
+    });
+  })}
+</TagPickerList>
 
 
 
