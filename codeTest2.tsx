@@ -1,126 +1,91 @@
-// -------------------- Get SPUserIDs from PeoplePicker selection --------------------
-const getUserIdsFromSelection = React.useCallback(async (): Promise<number[]> => {
-  const ids: number[] = [];
-  console.log(ids);
+import getGraphData from "../Utils/getGraphApiIts"; // <-- update path to your file
 
-  // let batchFlag = false;
-  let batchFlag = false;
+type KeyValue = {
+  Key: string;
+  DisplayText: string;
+  Email?: string;
+  GraphIndex: number;
+  EntityData?: { SPUserID?: string };
+};
 
-  // Get context.pageContext.web.title.peoplePickerIDs object from local storage by key.
-  // make const localStorageVar
-  // let GrphIndex = 1;
-  // const requestUri: any = [];
-  const localStorageVar = `${context.pageContext.web.title}.peoplePickerIDs`;
-  let GrphIndex = 1;
-  const requestUri: any[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
+const makeGraphAPI = async (
+  context: any,
+  requestsOrUrl: any,
+  batchFlag: boolean,
+  keyValues: KeyValue[],
+  localStorageVar: string
+): Promise<void> => {
+  console.log("makeGraphAPI called");
+  console.log("batchFlag:", batchFlag);
+  console.log("requestsOrUrl:", requestsOrUrl);
 
-  // -------------------- Loop through selected options --------------------
-  for (const e of selectedOptions) {
-    const elm = selectedOptionsRaw.filter((v) => v.DisplayText === e)[0];
+  // Call your existing Graph helper
+  const graphResponse = await getGraphData(context, requestsOrUrl, batchFlag);
+  console.log("graphResponse:", graphResponse);
 
-    // const item = [];
-    // filter elm through local storage using displayText const CheckSPUserIDStorage
-    const item: any[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
+  // ----------------------------
+  // Normalize results into: [{ email, id }]
+  // ----------------------------
+  const results: Array<{ email: string; id: string }> = [];
 
-    // filter elm through local storage using displayText const CheckSPUserIDStorage
-    const checkSPUserIDStorage = localStorage.getItem(elm.Key);
-    console.log(checkSPUserIDStorage);
+  if (batchFlag) {
+    // Graph $batch shape: { responses: [{ id, status, body: {...} }]}
+    const responses = graphResponse?.responses ?? [];
 
-    // If checkSPUserIDStorage.length > 0 that means value is in local storage so no api call needed.
-    if (checkSPUserIDStorage != null && checkSPUserIDStorage.length > 0) {
-      // Get SPUserId
-      // const num = Number(checkSPUserIDStorage.SPUserID)
-      // push num to ids
-      console.log("ids found");
+    for (const r of responses) {
+      const body = r?.body;
 
-      const num = Number(checkSPUserIDStorage);
-      if (!Number.isNaN(num)) {
-        ids.push(num);
+      // if the body is a collection (users?$filter...), Graph returns { value: [...] }
+      const user =
+        Array.isArray(body?.value) && body.value.length > 0 ? body.value[0] : body;
+
+      const email = (user?.mail ?? user?.userPrincipalName ?? "").toLowerCase();
+      const id = user?.id;
+
+      if (email && id) {
+        results.push({ email, id });
       }
     }
+  } else {
+    // Single call
+    // Your helper returns response.value when it exists, else response
+    const user =
+      Array.isArray(graphResponse) && graphResponse.length > 0
+        ? graphResponse[0]
+        : graphResponse;
 
-    // else
-    // Get the values of the Key from Selected options raw
-    else {
-      // Add the key values and displayText and GraphIndex and email to keyValues[]
-      // use index from keyValues[] for graphapi
-      const keyValues: any[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const email = (user?.mail ?? user?.userPrincipalName ?? "").toLowerCase();
+    const id = user?.id;
 
-      keyValues.push({
-        Key: elm.Key,
-        DisplayText: elm.DisplayText,
-        GraphIndex: GrphIndex,
-        Email: elm.EntityData?.Email,
-      });
-
-      // item.push(
-      //   {
-      //     id: GrphIndex++,
-      //     method: 'GET',
-      //     url: `${context.pageContext.web.absoluteUrl}/_api/web/siteusers/getByEmail('${elm.EntityData?.Email}')`
-      //   }
-      // );
-      item.push({
-        id: GrphIndex++,
-        method: "GET",
-        url: `${context.pageContext.web.absoluteUrl}/_api/web/siteusers/getByEmail('${elm.EntityData?.Email}')`,
-      });
-
-      // requestUri.push(...item);
-      requestUri.push(...item);
+    if (email && id) {
+      results.push({ email, id });
     }
   }
 
-  // If requestUri.length > 0
-  if (requestUri.length > 0) {
-    // Create a batch call using graphAPI:
-    // let urlElm;
-    let urlElm: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+  console.log("normalized results:", results);
 
-    // if (requestUri.length > 1) {
-    if (requestUri.length > 1) {
-      // const $batch = { requests: requestUri };
-      // urlElm = $batch;
-      // batchFlag = true;
-      const $batch = { requests: requestUri };
-      urlElm = $batch;
-      batchFlag = true;
-    }
+  // ----------------------------
+  // Apply results back to keyValues[]
+  // (SPUserID is just a string field — we’ll store the Graph user id)
+  // ----------------------------
+  for (const kv of keyValues) {
+    const kvEmail = (kv.Email ?? "").toLowerCase();
+    const match = results.find((r) => r.email === kvEmail);
 
-    // else {
-    else {
-      // urlElm = requestUri[0].url;
-      urlElm = requestUri[0].url;
-    }
-
-    // await makeGraphAPI(urlElm, batchFlag, keyValues)
-    await makeGraphAPI(urlElm, batchFlag, localStorageVar); // NOTE: you still need to implement makeGraphAPI
-
-    // store batch api results in const PPLBatchResults
-    // compare keyValues[] and filter through the PPLBatchResults
-    // const num = Number(elm.EntityData?.SPUserID)
-    // if (!Number.isNaN(num) && num > 0) {
-    //   ids.push(num);
-    // }
-    const PPLBatchResults = localStorage.getItem(localStorageVar);
-
-    if (PPLBatchResults) {
-      const parsed = JSON.parse(PPLBatchResults);
-
-      // parsed is expected to be an array of entities with EntityData.SPUserID
-      for (const elm of parsed) {
-        const num = Number(elm?.EntityData?.SPUserID);
-
-        if (!Number.isNaN(num) && num > 0) {
-          ids.push(num);
-        }
-      }
+    if (match) {
+      kv.EntityData = { ...(kv.EntityData ?? {}), SPUserID: match.id };
     }
   }
 
-  // else- return ids;
-  return ids;
-}, [selectedOptions, selectedOptionsRaw, context]);
+  console.log("keyValues updated:", keyValues);
+
+  // ----------------------------
+  // Store in localStorage (since your other function reads from it)
+  // ----------------------------
+  localStorage.setItem(localStorageVar, JSON.stringify(keyValues));
+  console.log("saved to localStorage:", localStorageVar);
+};
+
 
 
 
