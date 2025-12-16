@@ -1,10 +1,11 @@
-const display = (elm.DisplayText ?? "").replace(/'/g, "''");
+const name = (elm.DisplayText ?? "").replace(/'/g, "''");
 
 item.push({
-  id: GrphIndex++,
+  id: `${GrphIndex++}`,
   method: "GET",
-  url: `${context.pageContext.web.absoluteUrl}/_api/web/siteusers?$select=Id,Title,Email&$filter=Title eq '${display}'`
+  url: `/users?$filter=displayName eq '${name}'&$select=id,displayName,mail,userPrincipalName`
 });
+
 
 
 
