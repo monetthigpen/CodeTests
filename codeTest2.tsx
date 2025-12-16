@@ -1,11 +1,6 @@
-url: `/users/${encodeURIComponent(elm.EntityData?.Email ?? "")}?$select=id,mail,userPrincipalName`
+url: `${context.pageContext.web.absoluteUrl}/_api/web/siteusers/getByEmail('${elm.EntityData?.Email ?? ""}')?$select=Id`
 
-
-
-
-
-
-
-
-
-
+kv.EntityData = {
+  ...(kv.EntityData ?? {}),
+  SPUserID: String(user.Id)
+};
