@@ -1,9 +1,10 @@
-const localStorageVar = `${conText.pageContext.web.title}.peoplePickerIDs`;
-const storedRaw = localStorage.getItem(localStorageVar);
+const storedRaw = localStorage.getItem(localStorageVar) ?? "[]";
+const storedArr = JSON.parse(storedRaw) as any[];
 
-const checkSPUserIDStorage = storedRaw
-  ? JSON.parse(storedRaw).find((x: any) => x?.Key === elm.Key)?.EntityData?.SPUserID
-  : null;
+const checkSPUserIDStorage =
+  (storedArr.find((x) => x?.Key === elm.Key)?.EntityData?.SPUserID as string) ?? "";
+
+  if (!elm?.Key) continue;
 
 
 
