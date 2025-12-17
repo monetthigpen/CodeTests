@@ -1,15 +1,22 @@
-const raw = localStorage.getItem(localStorageVar);
+const localStorageVar = `${conText.pageContext.web.title}.peoplePickerIDs`;
+const cachedRaw = localStorage.getItem(localStorageVar);
+const cachedItems: any[] = cachedRaw ? JSON.parse(cachedRaw) : [];
 
-if (raw) {
-  const cached = JSON.parse(raw) as any[];
-  const found = cached.find(kv => kv?.Key === elm?.Key);
 
-  const spId = found?.EntityData?.SPUserID;
-  if (spId) {
-    ids.push(Number(spId));
-    continue; // skip API call for this person
-  }
+const elm = selectedOptionsRaw.find((v) => v.DisplayText === e);
+if (!elm?.Key) continue;
+
+// find cached record by Key (best match)
+const cached = cachedItems.find((x) => x?.Key === elm.Key);
+
+const spIdStr = cached?.EntityData?.SPUserID;
+const spIdNum = spIdStr ? Number(spIdStr) : NaN;
+
+if (!Number.isNaN(spIdNum)) {
+  ids.push(spIdNum);
+  continue; // ✅ skip API call because cache hit
 }
+
 
 
 
