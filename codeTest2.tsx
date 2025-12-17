@@ -1,10 +1,18 @@
-const storedRaw = localStorage.getItem(localStorageVar) ?? "[]";
-const storedArr = JSON.parse(storedRaw) as any[];
+
 
 const checkSPUserIDStorage =
-  (storedArr.find((x) => x?.Key === elm.Key)?.EntityData?.SPUserID as string) ?? "";
+  (key && (storedArr.find((x) => x?.Key === key)?.EntityData?.SPUserID as string)) ?? "";
 
-  if (!elm?.Key) continue;
+if (checkSPUserIDStorage.length > 0) {
+  console.log(checkSPUserIDStorage);
+  console.log("ids found");
+
+  const num = Number(checkSPUserIDStorage);
+  if (!Number.isNaN(num)) ids.push(num);
+} else {
+  // ✅ now it will actually reach here for “not in local storage”
+  // your API lookup code
+}
 
 
 
