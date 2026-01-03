@@ -54,12 +54,12 @@ const makeGraphAPI = async (
     });
 
   // Process response and update keyValues
-  if (!batchFlag && res?.value?.length > 0) {
-    // Single request - update first keyValue
-    const item = res.value[0];
-    console.log("Item from response:", item);
+  if (!batchFlag && res) {
+    // Single request - getByEmail returns user object directly
+    console.log("Item from response:", res);
     
-    const spUserId = item?.fields?.SPUserID || item?.fields?.Id || item?.Id;
+    // SharePoint REST API returns Id directly on the user object
+    const spUserId = res?.d?.Id || res?.Id;
     console.log("Extracted SPUserID:", spUserId);
     
     if (spUserId && keyValues.length > 0) {
@@ -68,9 +68,11 @@ const makeGraphAPI = async (
   } else if (batchFlag && res?.responses) {
     // Batch request - match by GraphIndex
     for (const resp of res.responses) {
-      if (resp.status === 200 && resp.body?.value?.length > 0) {
-        const item = resp.body.value[0];
-        const spUserId = item?.fields?.SPUserID || item?.fields?.Id || item?.Id;
+      console.log("Batch response item:", resp);
+      if (resp.status === 200) {
+        const item = resp.body?.d || resp.body;
+        const spUserId = item?.Id;
+        console.log("Batch item SPUserID:", spUserId);
         
         // Find matching keyValue by GraphIndex (resp.id)
         const kv = keyValues.find(k => k.GraphIndex === Number(resp.id));
@@ -253,43 +255,31 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
 
     // ------------------ Loop through selected options ------------------
     for (const e of selectedOptions) {
-      const elm = selectedOptionsRaw.find((v) => v.DisplayText === e);
-      
-      if (!elm) {
-        console.warn("Could not find raw entity for:", e);
-        continue;
-      }
-
-      const key = elm.Key ?? "";
-      console.log("Processing entity:", elm);
-
-      // First check if SPUserID is already in the entity from search
-      if (elm.EntityData?.SPUserID) {
-        const num = Number(elm.EntityData.SPUserID);
-        if (!Number.isNaN(num) && num > 0) {
-          console.log("SPUserID found in entity:", num);
-          ids.push(num);
-          continue;
-        }
-      }
+      const elm = selectedOptionsRaw.filter((v) => v.DisplayText === e)[0];
+      const key = elm?.Key ?? "";
+      const item: any[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
 
       // Check localStorage for cached SPUserID
       const storedRaw = localStorage.getItem(localStorageVar) ?? "[]";
       const storedArr = JSON.parse(storedRaw) as any[];
 
-      const storedEntity = storedArr.find((x) => x?.Key === key);
-      const checkSPUserIDStorage = storedEntity?.EntityData?.SPUserID as string ?? "";
+      const checkSPUserIDStorage =
+        (key && (storedArr.find((x) => x?.Key === key))?.EntityData?.SPUserID as string) ?? "";
 
-      if (checkSPUserIDStorage && checkSPUserIDStorage.length > 0) {
-        console.log("SPUserID found in localStorage:", checkSPUserIDStorage);
+      // if checkSPUserIDStorage.length > 0 that means value is in local storage so no api call needed.
+      if (checkSPUserIDStorage !== null && checkSPUserIDStorage.length > 0) {
+        console.log(checkSPUserIDStorage);
+        console.log("ids found");
+
         const num = Number(checkSPUserIDStorage);
         if (!Number.isNaN(num)) {
           ids.push(num);
         }
       } else {
-        // Need to fetch SPUserID via API
-        console.log("SPUserID not found, will fetch via API for:", elm.DisplayText);
-        
+        // Get the values of the Key from Selected options raw
+        // Add the key values and displayText and GraphIndex and email to keyValues[]
+        // use index from keyValues[] for graphapi
+
         keyValues.push({
           Key: elm.Key,
           DisplayText: elm.DisplayText,
@@ -297,14 +287,20 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
           Email: elm.EntityData?.Email,
         });
 
-        // Encode the display name for URL safety
-        const encodedTitle = encodeURIComponent(elm.DisplayText);
-        
-        requestUri.push({
+        item.push({
           id: GrphIndex++,
           method: "GET",
-          url: `/sites/${conText.pageContext.site.id}/lists/fe8fcb08-439f-4f47-af7c-ce27c61d945a/items?$expand=fields&$filter=fields/Title eq '${encodedTitle}'`
+          url: `/sites/${conText.pageContext.site.id}/lists/fe8fcb98-439f-4f47-af7c-ce27c61d945a/items?$expand=fields&$filter=fields/Title eq '${elm.DisplayText}'`
         });
+
+        // item.push({
+        //   id: GrphIndex++,
+        //   method: "GET",
+        //   url: `${conText.pageContext.web.absoluteUrl}/_api/web/siteusers/getByEmail('${encodeURIComponent(elm.EntityData?.Email ?? "")}')`
+        // });
+
+        // requestUri.push(...item);
+        requestUri.push(...item);
       }
     }
 
