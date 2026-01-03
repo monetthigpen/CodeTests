@@ -54,12 +54,13 @@ const makeGraphAPI = async (
     });
 
   // Process response and update keyValues
-  if (!batchFlag && res) {
-    // Single request - getByEmail returns user object directly
-    console.log("Item from response:", res);
+  if (!batchFlag && res?.value?.length > 0) {
+    // Single request - list items response
+    const item = res.value[0];
+    console.log("Item from response:", item);
+    console.log("Item fields:", item?.fields);
     
-    // SharePoint REST API returns Id directly on the user object
-    const spUserId = res?.d?.Id || res?.Id;
+    const spUserId = item?.fields?.SPUserId || item?.fields?.Id || item?.id;
     console.log("Extracted SPUserID:", spUserId);
     
     if (spUserId && keyValues.length > 0) {
@@ -69,9 +70,11 @@ const makeGraphAPI = async (
     // Batch request - match by GraphIndex
     for (const resp of res.responses) {
       console.log("Batch response item:", resp);
-      if (resp.status === 200) {
-        const item = resp.body?.d || resp.body;
-        const spUserId = item?.Id;
+      if (resp.status === 200 && resp.body?.value?.length > 0) {
+        const item = resp.body.value[0];
+        console.log("Batch item:", item);
+        console.log("Batch item fields:", item?.fields);
+        const spUserId = item?.fields?.SPUserId || item?.fields?.Id || item?.id;
         console.log("Batch item SPUserID:", spUserId);
         
         // Find matching keyValue by GraphIndex (resp.id)
