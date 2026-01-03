@@ -39,36 +39,12 @@ const makeGraphAPI = async (
   console.log("batchFlag:", batchFlag);
   console.log("requestsDrUrl:", requestsDrUrl);
 
-  const results: Array<{ email: string; spUserId: number }> = [];
-
   let res: any;
 
   await getGraphData(context, requestsDrUrl, batchFlag)
     .then((response) => {
-      console.log(response);
+      console.log("Raw response:", response);
       res = response;
-
-      // Process batch response
-      if (batchFlag && res?.responses) {
-        for (const resp of res.responses) {
-          if (resp.status === 200 && resp.body?.value?.length > 0) {
-            const item = resp.body.value[0];
-            const spUserId = Number(item?.fields?.SPUserID || item?.Id);
-            const email = String(item?.fields?.Email || item?.Email || "").toLowerCase();
-            if (!Number.isNaN(spUserId) && spUserId > 0) {
-              results.push({ email, spUserId });
-            }
-          }
-        }
-      } else if (!batchFlag && res) {
-        // Single request response
-        const item = res?.value?.[0] || res;
-        const spUserId = Number(item?.fields?.SPUserID || item?.Id);
-        const email = String(item?.fields?.Email || item?.Email || "").toLowerCase();
-        if (!Number.isNaN(spUserId) && spUserId > 0) {
-          results.push({ email, spUserId });
-        }
-      }
     })
     .catch((error) => {
       console.error("GraphAPI error:", error);
@@ -77,19 +53,35 @@ const makeGraphAPI = async (
       console.log("GraphAPI response:", res);
     });
 
-  console.log("normalized results:", results);
-
-  // write back to keyValues (match by email)
-  for (const kv of keyValues) {
-    const kvEmail = (kv.Email ?? "").toLowerCase();
-    const match = results.find((r) => r.email === kvEmail);
-    if (match) {
-      kv.EntityData = { ...(kv.EntityData ?? {}), SPUserID: String(match.spUserId) };
+  // Process response and update keyValues
+  if (!batchFlag && res?.value?.length > 0) {
+    // Single request - update first keyValue
+    const item = res.value[0];
+    console.log("Item from response:", item);
+    
+    const spUserId = item?.fields?.SPUserID || item?.fields?.Id || item?.Id;
+    console.log("Extracted SPUserID:", spUserId);
+    
+    if (spUserId && keyValues.length > 0) {
+      keyValues[0].EntityData = { SPUserID: String(spUserId) };
+    }
+  } else if (batchFlag && res?.responses) {
+    // Batch request - match by GraphIndex
+    for (const resp of res.responses) {
+      if (resp.status === 200 && resp.body?.value?.length > 0) {
+        const item = resp.body.value[0];
+        const spUserId = item?.fields?.SPUserID || item?.fields?.Id || item?.Id;
+        
+        // Find matching keyValue by GraphIndex (resp.id)
+        const kv = keyValues.find(k => k.GraphIndex === Number(resp.id));
+        if (kv && spUserId) {
+          kv.EntityData = { SPUserID: String(spUserId) };
+        }
+      }
     }
   }
 
   console.log("keyValues updated:", keyValues);
-
   localStorage.setItem(localStorageVar, JSON.stringify(keyValues));
   console.log("saved to localStorage:", localStorageVar);
 };
@@ -172,22 +164,8 @@ const collectUserIdsFromRaw = (rawValue: any): number[] => { // eslint-disable-l
 
 // ---------- Component ----------
 
-// Type for DynamicFormContext (add more properties as needed based on your context)
-interface DynamicFormContextType {
-  FormMode: number;
-  FormData: any; // eslint-disable-line @typescript-eslint/no-explicit-any
-  GlobalFormData: (targetId: string, value: any) => void; // eslint-disable-line @typescript-eslint/no-explicit-any
-  GlobalRefs: (element: HTMLInputElement | undefined) => void;
-  GlobalErrorHandle: (targetId: string, msg: string | undefined) => void;
-  AllDisableFields: any; // eslint-disable-line @typescript-eslint/no-explicit-any
-  AllHiddenFields: any; // eslint-disable-line @typescript-eslint/no-explicit-any
-  userBasedPerms: any; // eslint-disable-line @typescript-eslint/no-explicit-any
-  curUserInfo: any; // eslint-disable-line @typescript-eslint/no-explicit-any
-  listCols: any; // eslint-disable-line @typescript-eslint/no-explicit-any
-}
-
 const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
-  const ctx = React.useContext(DynamicFormContext) as DynamicFormContextType;
+  const ctx = React.useContext(DynamicFormContext);
 
   const {
     id,
@@ -319,10 +297,13 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
           Email: elm.EntityData?.Email,
         });
 
+        // Encode the display name for URL safety
+        const encodedTitle = encodeURIComponent(elm.DisplayText);
+        
         requestUri.push({
           id: GrphIndex++,
           method: "GET",
-          url: `/sites/${conText.pageContext.site.id}/lists/fe8fcb08-439f-4f47-af7c-ce27c61d945a/items?$expand=fields&filter={fields/Title eq '${elm.DisplayText}'}`
+          url: `/sites/${conText.pageContext.site.id}/lists/fe8fcb08-439f-4f47-af7c-ce27c61d945a/items?$expand=fields&$filter=fields/Title eq '${encodedTitle}'`
         });
       }
     }
@@ -933,6 +914,5 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
 };
 
 export default PeoplePicker;
-
 
 
