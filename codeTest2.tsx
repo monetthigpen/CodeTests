@@ -15,10 +15,10 @@ import {
   useId,
 } from "@fluentui/react-components";
 
-import { DynamicFormContext } from "../DynamicFormContext";
-import { formFieldsSetup, FormFieldsProps } from "../../Utils/formFieldBased";
+import { DynamicFormContext } from "./DynamicFormContext";
+import { formFieldsSetup, FormFieldsProps } from "../Utils/formFieldBased";
 import { FormCustomizerContext } from "@microsoft/sp-listview-extensibility";
-import getGraphData from "../../Utils/getGraphApi";
+import getGraphData from "../Utils/getGraphApi";
 
 type KeyValue = {
   Key: string;
@@ -125,7 +125,7 @@ export interface PeoplePickerProps {
 
   multiselect?: boolean;
   disabled?: boolean;
-  context: FormCustomizerContext;
+  conText: FormCustomizerContext;
 
   // People picker knobs
   principalType?: PrincipalType; // default 1 (User)
@@ -172,8 +172,22 @@ const collectUserIdsFromRaw = (rawValue: any): number[] => { // eslint-disable-l
 
 // ---------- Component ----------
 
+// Type for DynamicFormContext (add more properties as needed based on your context)
+interface DynamicFormContextType {
+  FormMode: number;
+  FormData: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+  GlobalFormData: (targetId: string, value: any) => void; // eslint-disable-line @typescript-eslint/no-explicit-any
+  GlobalRefs: (element: HTMLInputElement | undefined) => void;
+  GlobalErrorHandle: (targetId: string, msg: string | undefined) => void;
+  AllDisableFields: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+  AllHiddenFields: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+  userBasedPerms: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+  curUserInfo: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+  listCols: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+}
+
 const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
-  const ctx = React.useContext(DynamicFormContext);
+  const ctx = React.useContext(DynamicFormContext) as DynamicFormContextType;
 
   const {
     id,
@@ -188,7 +202,7 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
     disabled,
     principalType = 1,
     maxSuggestions = 5,
-    context,
+    conText,
     spHttpClient,
     spHttpClientConfig,
   } = props;
@@ -248,39 +262,56 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
   // -------------------- Get SPUserIDs from PeoplePicker selection --------------------
   const getUserIdsFromSelection = React.useCallback(async (): Promise<number[]> => {
     const ids: number[] = [];
-    console.log(ids);
+    console.log("getUserIdsFromSelection called");
+    console.log("selectedOptions:", selectedOptions);
+    console.log("selectedOptionsRaw:", selectedOptionsRaw);
 
     let batchFlag = false;
 
-    const localStorageVar = `${context.pageContext.web.title}.peoplePickerIDs`;
+    const localStorageVar = `${conText.pageContext.web.title}.peoplePickerIDs`;
     let GrphIndex = 1;
     const requestUri: any[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
-    const keyValues: any[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const keyValues: KeyValue[] = [];
 
     // ------------------ Loop through selected options ------------------
     for (const e of selectedOptions) {
-      const elm = selectedOptionsRaw.filter((v) => v.DisplayText === e)[0];
-      const key = elm?.Key ?? "";
-      const item: any[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
+      const elm = selectedOptionsRaw.find((v) => v.DisplayText === e);
+      
+      if (!elm) {
+        console.warn("Could not find raw entity for:", e);
+        continue;
+      }
 
-      // filter elm through local storage using displayText const CheckSPUserIDStorage
+      const key = elm.Key ?? "";
+      console.log("Processing entity:", elm);
+
+      // First check if SPUserID is already in the entity from search
+      if (elm.EntityData?.SPUserID) {
+        const num = Number(elm.EntityData.SPUserID);
+        if (!Number.isNaN(num) && num > 0) {
+          console.log("SPUserID found in entity:", num);
+          ids.push(num);
+          continue;
+        }
+      }
+
+      // Check localStorage for cached SPUserID
       const storedRaw = localStorage.getItem(localStorageVar) ?? "[]";
       const storedArr = JSON.parse(storedRaw) as any[];
 
-      const checkSPUserIDStorage =
-        (key && (storedArr.find((x) => x?.Key === key))?.EntityData?.SPUserID as string) ?? "";
+      const storedEntity = storedArr.find((x) => x?.Key === key);
+      const checkSPUserIDStorage = storedEntity?.EntityData?.SPUserID as string ?? "";
 
-      // if checkSPUserIDStorage.length > 0 that means value is in local storage so no api call needed.
-      if (checkSPUserIDStorage !== null && checkSPUserIDStorage.length > 0) {
-        console.log(checkSPUserIDStorage);
-        console.log("ids found");
-
+      if (checkSPUserIDStorage && checkSPUserIDStorage.length > 0) {
+        console.log("SPUserID found in localStorage:", checkSPUserIDStorage);
         const num = Number(checkSPUserIDStorage);
         if (!Number.isNaN(num)) {
           ids.push(num);
         }
       } else {
-        // Add the key values and displayText and GraphIndex and email to keyValues[]
+        // Need to fetch SPUserID via API
+        console.log("SPUserID not found, will fetch via API for:", elm.DisplayText);
+        
         keyValues.push({
           Key: elm.Key,
           DisplayText: elm.DisplayText,
@@ -288,15 +319,16 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
           Email: elm.EntityData?.Email,
         });
 
-        item.push({
+        requestUri.push({
           id: GrphIndex++,
           method: "GET",
-          url: `/sites/${context.pageContext.site.id}/lists/fe8fcb08-439f-4f47-af7c-ce27c61d945a/items?$expand=fields&filter={fields/Title eq '${elm.DisplayText}'}`
+          url: `/sites/${conText.pageContext.site.id}/lists/fe8fcb08-439f-4f47-af7c-ce27c61d945a/items?$expand=fields&filter={fields/Title eq '${elm.DisplayText}'}`
         });
-
-        requestUri.push(...item);
       }
     }
+
+    console.log("IDs found so far:", ids);
+    console.log("API requests needed:", requestUri.length);
 
     // if requestUri.length > 0 - process batch or single request
     if (requestUri.length > 0) {
@@ -310,26 +342,28 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
         urlElm = requestUri[0].url;
       }
 
-      await makeGraphAPI(context, urlElm, batchFlag, keyValues, localStorageVar);
+      await makeGraphAPI(conText, urlElm, batchFlag, keyValues, localStorageVar);
 
       // Retrieve updated results from localStorage
       const PPLBatchResults = localStorage.getItem(localStorageVar);
 
       if (PPLBatchResults) {
         const parsed = JSON.parse(PPLBatchResults);
+        console.log("Parsed localStorage after API call:", parsed);
 
-        for (const elm of parsed) {
-          const num = Number(elm?.EntityData?.SPUserID);
+        for (const item of parsed) {
+          const num = Number(item?.EntityData?.SPUserID);
 
-          if (!Number.isNaN(num) && num > 0) {
+          if (!Number.isNaN(num) && num > 0 && !ids.includes(num)) {
             ids.push(num);
           }
         }
       }
     }
 
+    console.log("Final IDs to return:", ids);
     return ids;
-  }, [selectedOptions, selectedOptionsRaw, context]);
+  }, [selectedOptions, selectedOptionsRaw, conText]);
 
   // ---------- Search (PeoplePicker Web Service) ----------
 
@@ -340,7 +374,7 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
         return [];
       }
 
-      const apiUrl = `${context.pageContext.site.serverRelativeUrl}/_api/SP.UI.ApplicationPages.ClientPeoplePickerWebServiceInterface.ClientPeoplePickerSearchUser`;
+      const apiUrl = `${conText.pageContext.site.serverRelativeUrl}/_api/SP.UI.ApplicationPages.ClientPeoplePickerWebServiceInterface.ClientPeoplePickerSearchUser`;
       const body = JSON.stringify({
         queryParams: {
           AllowEmailAddresses: true,
@@ -434,18 +468,21 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
   // ---------- Commit value to GlobalFormData ----------
 
   const commitValue = React.useCallback(async () => {
+    console.log("commitValue called");
     const err = validate();
     reportError(err);
 
     const targetId = `${id}Id`;
+    console.log("targetId:", targetId);
 
     const userIds = await getUserIdsFromSelection();
-    console.log(targetId);
-    console.log(userIds);
+    console.log("userIds from getUserIdsFromSelection:", userIds);
 
     if (multiselect) {
+      console.log("Setting GlobalFormData (multiselect):", targetId, userIds);
       ctx.GlobalFormData(targetId, userIds.length === 0 ? [] : userIds);
     } else {
+      console.log("Setting GlobalFormData (single):", targetId, userIds.length === 0 ? null : userIds[0]);
       ctx.GlobalFormData(targetId, userIds.length === 0 ? null : userIds[0]);
     }
 
@@ -567,8 +604,17 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
     const numericIds = collectUserIdsFromRaw(rawValue);
     if (!numericIds.length) return;
 
+    // *** IMMEDIATELY send starter values to GlobalFormData on initialization ***
+    const targetId = `${fieldInternalName}Id`;
+    if (multiselect) {
+      ctx.GlobalFormData(targetId, numericIds);
+    } else {
+      ctx.GlobalFormData(targetId, numericIds[0]);
+    }
+    console.log("PeoplePicker initialization - sent to GlobalFormData:", targetId, numericIds);
+
     const abort = new AbortController();
-    const localStorageVar = `${context.pageContext.web.title}.peoplePickerIDs`;
+    const localStorageVar = `${conText.pageContext.web.title}.peoplePickerIDs`;
 
     // eslint-disable-next-line no-void
     void (async () => {
@@ -580,7 +626,7 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
       for (const userId of numericIds) {
         try {
           const resp = await fetch(
-            `${context.pageContext.site.serverRelativeUrl}/_api/web/getUserById(${userId})`,
+            `${conText.pageContext.site.serverRelativeUrl}/_api/web/getUserById(${userId})`,
             {
               method: "GET",
               headers: {
@@ -757,7 +803,7 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
       }
 
       // Update localStorage when tag is removed
-      const localStorageVar = `${context.pageContext.web.title}.peoplePickerIDs`;
+      const localStorageVar = `${conText.pageContext.web.title}.peoplePickerIDs`;
       const updatedKeyValues = rawOption.map((entity, index) => ({
         Key: entity.Key,
         DisplayText: entity.DisplayText,
@@ -773,7 +819,7 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
         elemRef.current !== null ? elemRef.current : undefined
       );
     },
-    [ctx, id, multiselect, selectedOptions, selectedOptionsRaw, resolvedByLabel, context]
+    [ctx, id, multiselect, selectedOptions, selectedOptionsRaw, resolvedByLabel, conText]
   );
 
   // ---------- Render ----------
