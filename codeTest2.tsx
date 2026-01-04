@@ -34,11 +34,12 @@ const makeGraphAPI = async (
   batchFlag: boolean,
   keyValues: KeyValue[],
   localStorageVar: string
-): Promise<void> => {
+): Promise<number[]> => {
   console.log("makeGraphAPI called");
   console.log("batchFlag:", batchFlag);
   console.log("requestsDrUrl:", requestsDrUrl);
 
+  const ids: number[] = [];
   let res: any;
 
   await getGraphData(context, requestsDrUrl, batchFlag)
@@ -55,12 +56,17 @@ const makeGraphAPI = async (
 
   // Process response and update keyValues
   // Handle both { value: [...] } and direct array [...] response formats
+  console.log("res type:", typeof res, "isArray:", Array.isArray(res));
+  console.log("res?.value:", res?.value);
+  
   const items = res?.value || (Array.isArray(res) ? res : []);
+  console.log("items:", items, "items.length:", items.length);
   
   if (!batchFlag && items.length > 0) {
     // Single request - list items response
     const item = items[0];
     console.log("Item from response:", item);
+    console.log("Item keys:", item ? Object.keys(item) : "null");
     
     // id is directly on the item, not in fields
     const spUserId = item?.id;
@@ -68,6 +74,13 @@ const makeGraphAPI = async (
     
     if (spUserId && keyValues.length > 0) {
       keyValues[0].EntityData = { SPUserID: String(spUserId) };
+      console.log("Set EntityData.SPUserID to:", String(spUserId));
+      const num = Number(spUserId);
+      if (!Number.isNaN(num) && num > 0) {
+        ids.push(num);
+      }
+    } else {
+      console.log("SPUserID not set - spUserId:", spUserId, "keyValues.length:", keyValues.length);
     }
   } else if (batchFlag && res?.responses) {
     // Batch request - match by GraphIndex
@@ -87,6 +100,10 @@ const makeGraphAPI = async (
           const kv = keyValues.find(k => k.GraphIndex === Number(resp.id));
           if (kv && spUserId) {
             kv.EntityData = { SPUserID: String(spUserId) };
+            const num = Number(spUserId);
+            if (!Number.isNaN(num) && num > 0) {
+              ids.push(num);
+            }
           }
         }
       }
@@ -96,6 +113,8 @@ const makeGraphAPI = async (
   console.log("keyValues updated:", keyValues);
   localStorage.setItem(localStorageVar, JSON.stringify(keyValues));
   console.log("saved to localStorage:", localStorageVar);
+  console.log("IDs from makeGraphAPI:", ids);
+  return ids;
 };
 
 // ---------- Types ----------
@@ -344,21 +363,13 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
         urlElm = requestUri[0].url;
       }
 
-      await makeGraphAPI(conText, urlElm, batchFlag, keyValues, localStorageVar);
-
-      // Retrieve updated results from localStorage
-      const PPLBatchResults = localStorage.getItem(localStorageVar);
-
-      if (PPLBatchResults) {
-        const parsed = JSON.parse(PPLBatchResults);
-        console.log("Parsed localStorage after API call:", parsed);
-
-        for (const item of parsed) {
-          const num = Number(item?.EntityData?.SPUserID);
-
-          if (!Number.isNaN(num) && num > 0 && !ids.includes(num)) {
-            ids.push(num);
-          }
+      // makeGraphAPI now returns IDs directly
+      const apiIds = await makeGraphAPI(conText, urlElm, batchFlag, keyValues, localStorageVar);
+      
+      // Add the IDs from API call directly (no need to read localStorage again)
+      for (const num of apiIds) {
+        if (!ids.includes(num)) {
+          ids.push(num);
         }
       }
     }
