@@ -251,7 +251,7 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
 
     let batchFlag = false;
 
-    const localStorageVar = `${conText.pageContext.web.title}.peoplePickerIDs`;
+    const localStorageVar = `${conText.pageContext.web.title}.peoplePickerIDs.${id}`;
     let GrphIndex = 1;
     const requestUri: any[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
     const keyValues: KeyValue[] = [];
@@ -594,7 +594,7 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
     console.log("PeoplePicker initialization - sent to GlobalFormData:", targetId, numericIds);
 
     const abort = new AbortController();
-    const localStorageVar = `${conText.pageContext.web.title}.peoplePickerIDs`;
+    const localStorageVar = `${conText.pageContext.web.title}.peoplePickerIDs.${id}`;
 
     // eslint-disable-next-line no-void
     void (async () => {
@@ -783,7 +783,7 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
       }
 
       // Update localStorage when tag is removed
-      const localStorageVar = `${conText.pageContext.web.title}.peoplePickerIDs`;
+      const localStorageVar = `${conText.pageContext.web.title}.peoplePickerIDs.${id}`;
       const updatedKeyValues = rawOption.map((entity, index) => ({
         Key: entity.Key,
         DisplayText: entity.DisplayText,
