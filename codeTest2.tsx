@@ -460,7 +460,7 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
 
     if (multiselect) {
       console.log("Setting GlobalFormData (multiselect):", targetId, userIds);
-      ctx.GlobalFormData(targetId, userIds.length === 0 ? { results: [] } : { results: userIds });
+      ctx.GlobalFormData(targetId, userIds.length === 0 ? [] : userIds);
     } else {
       console.log("Setting GlobalFormData (single):", targetId, userIds.length === 0 ? null : userIds[0]);
       ctx.GlobalFormData(targetId, userIds.length === 0 ? null : userIds[0]);
@@ -587,7 +587,7 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
     // *** IMMEDIATELY send starter values to GlobalFormData on initialization ***
     const targetId = `${fieldInternalName}Id`;
     if (multiselect) {
-      ctx.GlobalFormData(targetId, { results: numericIds });
+      ctx.GlobalFormData(targetId, numericIds);
     } else {
       ctx.GlobalFormData(targetId, numericIds[0]);
     }
@@ -678,7 +678,7 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
         .filter(num => !Number.isNaN(num) && num > 0);
 
       if (multiselect) {
-        ctx.GlobalFormData(targetId, userIds.length === 0 ? { results: [] } : { results: userIds });
+        ctx.GlobalFormData(targetId, userIds.length === 0 ? [] : userIds);
       } else {
         ctx.GlobalFormData(targetId, userIds.length === 0 ? null : userIds[0]);
       }
@@ -774,7 +774,7 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
             })();
 
       if (multiselect) {
-        ctx.GlobalFormData(targetId, userIds.length === 0 ? { results: [] } : { results: userIds });
+        ctx.GlobalFormData(targetId, userIds.length === 0 ? [] : userIds);
       } else {
         ctx.GlobalFormData(
           targetId,
