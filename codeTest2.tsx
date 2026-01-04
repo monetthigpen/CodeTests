@@ -64,8 +64,8 @@ const makeGraphAPI = async (
     console.log("Item from response:", item);
     console.log("Item fields:", item?.fields);
     
-    // SPUserId is in the fields object
-    const spUserId = item?.fields?.SPUserId;
+    // SPUserId or SPUserID is in the fields object
+    const spUserId = item?.fields?.SPUserID || item?.fields?.SPUserId || item?.Id;
     console.log("Extracted SPUserID:", spUserId);
     
     if (spUserId && keyValues.length > 0) {
@@ -86,8 +86,8 @@ const makeGraphAPI = async (
           const item = batchItems[0];
           console.log("Batch item:", item);
           console.log("Batch item fields:", item?.fields);
-          // SPUserId is in the fields object
-          const spUserId = item?.fields?.SPUserId;
+          // SPUserId or SPUserID is in the fields object
+          const spUserId = item?.fields?.SPUserID || item?.fields?.SPUserId || item?.Id;
           console.log("Batch item SPUserID:", spUserId);
           
           // Find matching keyValue by GraphIndex (resp.id)
