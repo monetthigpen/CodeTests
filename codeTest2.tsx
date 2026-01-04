@@ -71,9 +71,12 @@ const makeGraphAPI = async (
     const item = items[0];
     console.log("Item from response:", item);
     console.log("Item keys:", item ? Object.keys(item) : "null");
+    console.log("Item fields:", item?.fields);
+    console.log("Item fields keys:", item?.fields ? Object.keys(item.fields) : "null");
     
+    // The list item 'id' is NOT the SPUserID - we need to get it from fields
     // Try multiple locations for SPUserID
-    const spUserId = item?.id || item?.Id || item?.fields?.id || item?.fields?.Id || item?.fields?.SPUserID;
+    const spUserId = item?.fields?.SPUserID || item?.fields?.SPUserId || item?.fields?.Id || item?.fields?.id;
     console.log("Extracted SPUserID:", spUserId);
     
     if (spUserId && keyValues.length > 0) {
@@ -96,8 +99,9 @@ const makeGraphAPI = async (
         if (batchItems.length > 0) {
           const item = batchItems[0];
           console.log("Batch item:", item);
-          // Try multiple locations for SPUserID
-          const spUserId = item?.id || item?.Id || item?.fields?.id || item?.fields?.Id || item?.fields?.SPUserID;
+          console.log("Batch item fields:", item?.fields);
+          // The list item 'id' is NOT the SPUserID - we need to get it from fields
+          const spUserId = item?.fields?.SPUserID || item?.fields?.SPUserId || item?.fields?.Id || item?.fields?.id;
           console.log("Batch item SPUserID:", spUserId);
           
           // Find matching keyValue by GraphIndex (resp.id)
