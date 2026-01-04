@@ -62,14 +62,18 @@ const makeGraphAPI = async (
   const items = res?.value || (Array.isArray(res) ? res : []);
   console.log("items:", items, "items.length:", items.length);
   
+  if (items.length === 0 && !batchFlag) {
+    console.log("WARNING: No items in response. Full response:", JSON.stringify(res));
+  }
+  
   if (!batchFlag && items.length > 0) {
     // Single request - list items response
     const item = items[0];
     console.log("Item from response:", item);
     console.log("Item keys:", item ? Object.keys(item) : "null");
     
-    // id is directly on the item, not in fields
-    const spUserId = item?.id;
+    // Try multiple locations for SPUserID
+    const spUserId = item?.id || item?.Id || item?.fields?.id || item?.fields?.Id || item?.fields?.SPUserID;
     console.log("Extracted SPUserID:", spUserId);
     
     if (spUserId && keyValues.length > 0) {
@@ -92,8 +96,8 @@ const makeGraphAPI = async (
         if (batchItems.length > 0) {
           const item = batchItems[0];
           console.log("Batch item:", item);
-          // id is directly on the item, not in fields
-          const spUserId = item?.id;
+          // Try multiple locations for SPUserID
+          const spUserId = item?.id || item?.Id || item?.fields?.id || item?.fields?.Id || item?.fields?.SPUserID;
           console.log("Batch item SPUserID:", spUserId);
           
           // Find matching keyValue by GraphIndex (resp.id)
