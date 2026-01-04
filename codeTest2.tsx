@@ -54,9 +54,12 @@ const makeGraphAPI = async (
     });
 
   // Process response and update keyValues
-  if (!batchFlag && res?.value?.length > 0) {
+  // Handle both { value: [...] } and direct array [...] response formats
+  const items = res?.value || (Array.isArray(res) ? res : []);
+  
+  if (!batchFlag && items.length > 0) {
     // Single request - list items response
-    const item = res.value[0];
+    const item = items[0];
     console.log("Item from response:", item);
     
     // id is directly on the item, not in fields
@@ -70,17 +73,21 @@ const makeGraphAPI = async (
     // Batch request - match by GraphIndex
     for (const resp of res.responses) {
       console.log("Batch response item:", resp);
-      if (resp.status === 200 && resp.body?.value?.length > 0) {
-        const item = resp.body.value[0];
-        console.log("Batch item:", item);
-        // id is directly on the item, not in fields
-        const spUserId = item?.id;
-        console.log("Batch item SPUserID:", spUserId);
-        
-        // Find matching keyValue by GraphIndex (resp.id)
-        const kv = keyValues.find(k => k.GraphIndex === Number(resp.id));
-        if (kv && spUserId) {
-          kv.EntityData = { SPUserID: String(spUserId) };
+      if (resp.status === 200) {
+        // Handle both { value: [...] } and direct array [...] response formats
+        const batchItems = resp.body?.value || (Array.isArray(resp.body) ? resp.body : []);
+        if (batchItems.length > 0) {
+          const item = batchItems[0];
+          console.log("Batch item:", item);
+          // id is directly on the item, not in fields
+          const spUserId = item?.id;
+          console.log("Batch item SPUserID:", spUserId);
+          
+          // Find matching keyValue by GraphIndex (resp.id)
+          const kv = keyValues.find(k => k.GraphIndex === Number(resp.id));
+          if (kv && spUserId) {
+            kv.EntityData = { SPUserID: String(spUserId) };
+          }
         }
       }
     }
