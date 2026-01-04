@@ -1,15 +1,12 @@
-const justSelectedRef = React.useRef<boolean>(false);
-
-// Mark that an option was just selected (to skip blur validation)
-justSelectedRef.current = true;
-setTimeout(() => { justSelectedRef.current = false; }, 100);
-
-// Mark that an option was just selected (to skip blur validation)
-justSelectedRef.current = true;
-setTimeout(() => { justSelectedRef.current = false; }, 100);
-        
 const handleBlur = (): void => {
-  // Delay to let onOptionSelect run first
+  setQuery("");
+  setOptionsRaw([]);
+  
+  // For single select, useEffect handles commit after selection
+  if (!isMulti) {
+    return;
+  }
+  
   setTimeout(() => {
     if (justSelectedRef.current) {
       return;
@@ -18,12 +15,7 @@ const handleBlur = (): void => {
     setTouched(true);
     commitValue();
   }, 150);
-  
-  setQuery("");
-  setOptionsRaw([]);
 };
-
-const isFirstRender = React.useRef(true);
 
 React.useEffect(() => {
   if (isFirstRender.current) {
@@ -31,7 +23,13 @@ React.useEffect(() => {
     return;
   }
   
+  // For single select, commit directly without validation
   if (!isMulti && selectedOptionsRaw.length > 0) {
-    commitValue();
+    reportError("");
+    const targetId = `${id}Id`;
+    getUserIdsFromSelection().then(userIds => {
+      ctx.GlobalFormData(targetId, userIds.length > 0 ? userIds[0] : null);
+      setDisplayOverride(selectedOptions.join("; "));
+    });
   }
 }, [selectedOptionsRaw]); // eslint-disable-line react-hooks/exhaustive-deps
