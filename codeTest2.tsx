@@ -62,9 +62,10 @@ const makeGraphAPI = async (
     // Single request - list items response
     const item = items[0];
     console.log("Item from response:", item);
+    console.log("Item fields:", item?.fields);
     
-    // id is directly on the item
-    const spUserId = item?.id;
+    // SPUserId is in the fields object
+    const spUserId = item?.fields?.SPUserId;
     console.log("Extracted SPUserID:", spUserId);
     
     if (spUserId && keyValues.length > 0) {
@@ -84,8 +85,9 @@ const makeGraphAPI = async (
         if (batchItems.length > 0) {
           const item = batchItems[0];
           console.log("Batch item:", item);
-          // id is directly on the item
-          const spUserId = item?.id;
+          console.log("Batch item fields:", item?.fields);
+          // SPUserId is in the fields object
+          const spUserId = item?.fields?.SPUserId;
           console.log("Batch item SPUserID:", spUserId);
           
           // Find matching keyValue by GraphIndex (resp.id)
@@ -105,9 +107,6 @@ const makeGraphAPI = async (
   console.log("keyValues updated:", keyValues);
   localStorage.setItem(localStorageVar, JSON.stringify(keyValues));
   console.log("saved to localStorage:", localStorageVar);
-  console.log("IDs from makeGraphAPI:", ids);
-  return ids;
-};
   console.log("IDs from makeGraphAPI:", ids);
   return ids;
 };
