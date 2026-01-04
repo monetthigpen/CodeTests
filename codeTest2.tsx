@@ -511,11 +511,6 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
     }
 
     setQuery("");
-    
-    // Commit value immediately on selection
-    setTimeout(() => {
-      commitValue();
-    }, 100);
   };
 
   const handleInputChange = React.useCallback(
@@ -538,6 +533,17 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
     setQuery("");
     setOptionsRaw([]);
   };
+
+  // ---------- Auto-commit when selection changes ----------
+  const isFirstRender = React.useRef(true);
+  React.useEffect(() => {
+    // Skip the first render to avoid committing on initial load
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    commitValue();
+  }, [selectedOptionsRaw.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------- Submitting: disable & lock display text (same pattern as TagPicker) ----------
 
