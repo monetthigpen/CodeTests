@@ -511,6 +511,11 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
     }
 
     setQuery("");
+    
+    // Commit value immediately on selection
+    setTimeout(() => {
+      commitValue();
+    }, 100);
   };
 
   const handleInputChange = React.useCallback(
