@@ -54,40 +54,25 @@ const makeGraphAPI = async (
       console.log("GraphAPI response:", res);
     });
 
-  // Process response and update keyValues
   // Handle both { value: [...] } and direct array [...] response formats
-  console.log("res type:", typeof res, "isArray:", Array.isArray(res));
-  console.log("res?.value:", res?.value);
-  
   const items = res?.value || (Array.isArray(res) ? res : []);
-  console.log("items:", items, "items.length:", items.length);
-  
-  if (items.length === 0 && !batchFlag) {
-    console.log("WARNING: No items in response. Full response:", JSON.stringify(res));
-  }
-  
+
+  // Process response and update keyValues
   if (!batchFlag && items.length > 0) {
     // Single request - list items response
     const item = items[0];
     console.log("Item from response:", item);
-    console.log("Item keys:", item ? Object.keys(item) : "null");
-    console.log("Item fields:", item?.fields);
-    console.log("Item fields keys:", item?.fields ? Object.keys(item.fields) : "null");
     
-    // The list item 'id' is NOT the SPUserID - we need to get it from fields
-    // Try multiple locations for SPUserID
-    const spUserId = item?.fields?.SPUserID || item?.fields?.SPUserId || item?.fields?.Id || item?.fields?.id;
+    // id is directly on the item
+    const spUserId = item?.id;
     console.log("Extracted SPUserID:", spUserId);
     
     if (spUserId && keyValues.length > 0) {
       keyValues[0].EntityData = { SPUserID: String(spUserId) };
-      console.log("Set EntityData.SPUserID to:", String(spUserId));
       const num = Number(spUserId);
       if (!Number.isNaN(num) && num > 0) {
         ids.push(num);
       }
-    } else {
-      console.log("SPUserID not set - spUserId:", spUserId, "keyValues.length:", keyValues.length);
     }
   } else if (batchFlag && res?.responses) {
     // Batch request - match by GraphIndex
@@ -99,9 +84,8 @@ const makeGraphAPI = async (
         if (batchItems.length > 0) {
           const item = batchItems[0];
           console.log("Batch item:", item);
-          console.log("Batch item fields:", item?.fields);
-          // The list item 'id' is NOT the SPUserID - we need to get it from fields
-          const spUserId = item?.fields?.SPUserID || item?.fields?.SPUserId || item?.fields?.Id || item?.fields?.id;
+          // id is directly on the item
+          const spUserId = item?.id;
           console.log("Batch item SPUserID:", spUserId);
           
           // Find matching keyValue by GraphIndex (resp.id)
@@ -121,6 +105,9 @@ const makeGraphAPI = async (
   console.log("keyValues updated:", keyValues);
   localStorage.setItem(localStorageVar, JSON.stringify(keyValues));
   console.log("saved to localStorage:", localStorageVar);
+  console.log("IDs from makeGraphAPI:", ids);
+  return ids;
+};
   console.log("IDs from makeGraphAPI:", ids);
   return ids;
 };
@@ -345,13 +332,6 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
           url: `/sites/${conText.pageContext.site.id}/lists/fe8fcb98-439f-4f47-af7c-ce27c61d945a/items?$expand=fields&$filter=fields/Title eq '${elm.DisplayText}'`
         });
 
-        // item.push({
-        //   id: GrphIndex++,
-        //   method: "GET",
-        //   url: `${conText.pageContext.web.absoluteUrl}/_api/web/siteusers/getByEmail('${encodeURIComponent(elm.EntityData?.Email ?? "")}')`
-        // });
-
-        // requestUri.push(...item);
         requestUri.push(...item);
       }
     }
@@ -954,3 +934,4 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
 };
 
 export default PeoplePicker;
+         
