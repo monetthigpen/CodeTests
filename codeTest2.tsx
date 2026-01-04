@@ -9,15 +9,16 @@ justSelectedRef.current = true;
 setTimeout(() => { justSelectedRef.current = false; }, 100);
         
 const handleBlur = (): void => {
-  // Skip validation if an option was just selected
-  if (justSelectedRef.current) {
-    setQuery("");
-    setOptionsRaw([]);
-    return;
-  }
+  // Delay to let onOptionSelect run first
+  setTimeout(() => {
+    if (justSelectedRef.current) {
+      return;
+    }
+    
+    setTouched(true);
+    commitValue();
+  }, 150);
   
-  setTouched(true);
-  commitValue();
   setQuery("");
   setOptionsRaw([]);
 };
