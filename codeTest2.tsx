@@ -259,10 +259,26 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
     // ------------------ Loop through selected options ------------------
     for (const e of selectedOptions) {
       const elm = selectedOptionsRaw.filter((v) => v.DisplayText === e)[0];
+      
+      if (!elm) {
+        console.warn("Could not find raw entity for:", e);
+        continue;
+      }
+      
       const key = elm?.Key ?? "";
       const item: any[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
 
-      // Check localStorage for cached SPUserID
+      // FIRST: Check if SPUserID is already in the entity (from hydration or search)
+      if (elm.EntityData?.SPUserID) {
+        const num = Number(elm.EntityData.SPUserID);
+        if (!Number.isNaN(num) && num > 0) {
+          console.log("SPUserID found in entity:", num);
+          ids.push(num);
+          continue;
+        }
+      }
+
+      // SECOND: Check localStorage for cached SPUserID
       const storedRaw = localStorage.getItem(localStorageVar) ?? "[]";
       const storedArr = JSON.parse(storedRaw) as any[];
 
@@ -272,16 +288,15 @@ const PeoplePicker: React.FC<PeoplePickerProps> = (props) => {
       // if checkSPUserIDStorage.length > 0 that means value is in local storage so no api call needed.
       if (checkSPUserIDStorage !== null && checkSPUserIDStorage.length > 0) {
         console.log(checkSPUserIDStorage);
-        console.log("ids found");
+        console.log("ids found in localStorage");
 
         const num = Number(checkSPUserIDStorage);
         if (!Number.isNaN(num)) {
           ids.push(num);
         }
       } else {
-        // Get the values of the Key from Selected options raw
+        // THIRD: Need to fetch via Graph API
         // Add the key values and displayText and GraphIndex and email to keyValues[]
-        // use index from keyValues[] for graphapi
 
         keyValues.push({
           Key: elm.Key,
