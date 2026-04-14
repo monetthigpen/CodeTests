@@ -1,25 +1,23 @@
-//** statusText must match SharePoint Status column choices exactly */
-import type { DecisionMap } from "./types";
+/* Auto-generated typed decision resolvers */
+import type { StepId, DecisionStepId, FlowStep } from "./types";
+import { decisionMap } from "./decisionMap";
 
-export const decisionMap: DecisionMap = {
-  steps: {
-    P200: {
-      decisionStepId: "P200",
-      Yes: [
-        { id: "P400", statusText: "Approved" }
-      ],
-      No: "P300"
-    },
+/**
+ * Single decide() router that delegates to the decision map.
+ * Use this as the `decide` option in useFlowEngine().
+ */
+export const decisionExecuter = (step: FlowStep, statusValue: string): StepId => {
+  const rule = decisionMap.steps[step.id as DecisionStepId];
 
-    P300: {
-      decisionStepId: "P300",
-      Yes: [
-        { id: "P400", statusText: "Approved" }
-      ],
-      No: {
-        id: "P600",
-        statusText: "Rejected"
-      }
-    }
+  if (!rule) {
+    throw new Error(`No decision rule found for step ${step.id}`);
   }
+
+  const candidate = rule.Yes.find((t) => t.statusText === statusValue);
+
+  if (candidate) {
+    return candidate.id;
+  }
+
+  return rule.No;
 };
