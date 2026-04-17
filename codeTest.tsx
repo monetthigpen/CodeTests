@@ -1,8 +1,7 @@
 import {
   SubmitToCcOwnerVars,
   SubmitToEokmVars,
-  ApprovedToEokmVars,
-  RejectedToEokmVars
+  DecisionEokmVars
 } from "./emailTypes";
 import { FormCustomizerContext } from "@microsoft/sp-listview-extensibility";
 import {
@@ -13,7 +12,7 @@ import {
 
 /**
  * Keep this union aligned with the statuses you actually want to email on.
- * Do NOT confuse this with SharePoint Status choices.
+ * This is for email routing, not SharePoint Status choices.
  */
 export type EmailStatus = "Submitted" | "Approved" | "Rejected";
 
@@ -123,11 +122,11 @@ function subjectSubmitToEokm(v: SubmitToEokmVars): string {
   return `Authorized Requestor Request #${v.requestId} submitted by ${v.requesterFullName}`;
 }
 
-function subjectApprovedToEokm(v: ApprovedToEokmVars): string {
+function subjectApprovedToEokm(v: DecisionEokmVars): string {
   return `Authorized Requestor Request #${v.requestId} approved`;
 }
 
-function subjectRejectedToEokm(v: RejectedToEokmVars): string {
+function subjectRejectedToEokm(v: DecisionEokmVars): string {
   return `Authorized Requestor Request #${v.requestId} rejected`;
 }
 
@@ -173,7 +172,7 @@ function renderSubmitToEokm(v: SubmitToEokmVars): string {
   return container(inner);
 }
 
-function renderApprovedToEokm(v: ApprovedToEokmVars): string {
+function renderApprovedToEokm(v: DecisionEokmVars): string {
   const inner = [
     p(`Dear Knowledge Services Team,`),
     p(
@@ -192,7 +191,7 @@ function renderApprovedToEokm(v: ApprovedToEokmVars): string {
   return container(inner);
 }
 
-function renderRejectedToEokm(v: RejectedToEokmVars): string {
+function renderRejectedToEokm(v: DecisionEokmVars): string {
   const inner = [
     p(`Dear Knowledge Services Team,`),
     p(
@@ -263,7 +262,7 @@ export function buildEmail(ctx: EmailRouterContext): EmailPayload[] | null {
     }
 
     case "Approved": {
-      const approvedVars: ApprovedToEokmVars = {
+      const approvedVars: DecisionEokmVars = {
         requesterFullName: ctx.requesterName,
         requestTypeText: ctx.requestTypeText,
         requestId: String(ctx.itemID),
@@ -281,7 +280,7 @@ export function buildEmail(ctx: EmailRouterContext): EmailPayload[] | null {
     }
 
     case "Rejected": {
-      const rejectedVars: RejectedToEokmVars = {
+      const rejectedVars: DecisionEokmVars = {
         requesterFullName: ctx.requesterName,
         requestTypeText: ctx.requestTypeText,
         requestId: String(ctx.itemID),
@@ -353,6 +352,7 @@ export async function sendEmail(
 
 function safeJsonParse<T>(text: string): T | undefined {
   const t = (text ?? "").trim();
+
   if (!t) return undefined;
   if (!(t.startsWith("{") || t.startsWith("["))) return undefined;
 
