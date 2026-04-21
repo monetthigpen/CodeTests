@@ -1,364 +1,557 @@
-import {
-  SubmitToCcOwnerVars,
-  SubmitToEokmVars,
-  DecisionEokmVars
-} from "./emailTypes";
+import * as React from "react";
+import { Button, Spinner } from "@fluentui/react-components";
+import { DynamicFormContext } from "@spfx-monorepo/shared-library/dist/cjs/components/DynamicFormContext";
+import { postSPRestAPI, ReturnDataProps } from "@spfx-monorepo/shared-library/dist/cjs/utils/postSPRestAPI";
 import { FormCustomizerContext } from "@microsoft/sp-listview-extensibility";
+import { PplPicker } from "@spfx-monorepo/shared-library/dist/cjs/utils/id/preutils/types";
+import { StepId } from "../flowscaffold/types";
+import { processMap } from "../flowscaffold/processMap";
+import type { UserProps } from "@spfx-monorepo/shared-library/dist/cjs/utils/types";
+import { createFlowEngine } from "../flowscaffold/engine";
+import type { RequestTracker } from "../flowscaffold/types";
+import { decisionExecuter } from "../flowscaffold/deciders";
 import {
-  IHttpClientOptions,
-  HttpClient,
-  HttpClientResponse
-} from "@microsoft/sp-http";
+  buildEmail,
+  EmailPayload,
+  EmailRouterContext,
+  FlowBody,
+  FlowResult,
+  sendEmail
+} from "../flowscaffold/email";
+import { evaluateFieldRules } from "@spfx-monorepo/shared-library/dist/cjs/utils/formRulesEngine";
 
-/**
- * Keep this union aligned with the statuses you actually want to email on.
- * This is for email routing, not SharePoint Status choices.
- */
-export type EmailStatus = "Submitted" | "Approved" | "Rejected";
-
-/** Minimal info needed to build emails for this flow */
-export interface EmailRouterContext {
-  status: EmailStatus;
-  requestTypeText: string;
-  requesterName: string;
-  requesterEmail?: string;
-  itemID: string | number;
+interface ButtonProps {
+  OnSubmit: (data: boolean) => void;
+  submitting: boolean;
   formContext: FormCustomizerContext;
+  selectedType: string;
+}
 
+type PplPickerStorage = {
+  email: string;
+  fullName: string;
+};
+
+type StepResult = {
+  ok: boolean;
+  value?: EmailRouterContext;
+};
+
+type RequestHistoryEntry = {
+  stepId: StepId;
+  status?: "Approved" | "Rejected";
+  timestamp: string;
+  modifiedBy: string;
   ccOwnerName?: string;
   ccOwnerEmail?: string;
-
-  eokmMailBox?: string;
-
-  /**
-   * true = submitter is the cost center owner
-   * false = submitter is NOT the cost center owner
-   */
-  isCostCenterOwner?: boolean;
-}
-
-/** Flow response shape */
-export type FlowBody = {
-  success?: boolean;
-  message?: string;
+  requesterName?: string;
+  requesterEmail?: string;
 };
 
-export type FlowResult<TBody = any> = {
-  ok: boolean;
-  status: number;
-  statusText: string;
-  body?: TBody;
-  raw?: string;
-  error?: string;
-};
+export default function SaveComponent(props: ButtonProps): JSX.Element {
+  const ctx = DynamicFormContext();
 
-/** What gets posted to your flow */
-export interface EmailPayload {
-  to: string[];
-  subject: string;
-  html: string;
-}
+  const [isHidden, setIsHidden] = React.useState<boolean>(false);
+  const [isDisabled, setIsDisabled] = React.useState<boolean>(false);
+  const [spinnerHidden, setSpinnerHidden] = React.useState<boolean>(true);
+  const [spinnerLabel, setSpinnerLabel] = React.useState<string>("");
 
-/* =========================================================
-   HTML HELPERS
-========================================================= */
+  const btnId = "btnSubmit";
 
-function escapeHtml(value: string): string {
-  return String(value).replace(/[&<>"']/g, (ch) =>
-    ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;"
-    } as Record<string, string>)[ch]
-  );
-}
+  const FORM_MODE_DISPLAY = 4;
+  const FORM_MODE_EDIT = 6;
+  const FORM_MODE_NEW = 8;
 
-function p(innerHtml: string): string {
-  return `<p style="margin:8px 0;font:11pt 'Segoe UI',Tahoma,Arial,sans-serif;color:#212529;">${innerHtml}</p>`;
-}
+  const showSpinner = (label: string) => {
+    setSpinnerLabel(label);
+    setSpinnerHidden(false);
+  };
 
-function pRedItalic(innerHtml: string): string {
-  return `<p style="margin:8px 0;font:11pt 'Segoe UI',Tahoma,Arial,sans-serif;color:red;font-style:italic;">${innerHtml}</p>`;
-}
+  const hideSpinner = () => {
+    setSpinnerLabel("");
+    setSpinnerHidden(true);
+  };
 
-function strong(innerText: string): string {
-  return `<strong>${escapeHtml(innerText)}</strong>`;
-}
+  const endSubmitUI = () => {
+    props.OnSubmit(false);
+    hideSpinner();
+  };
 
-function spanBold(innerHtml: string): string {
-  return `<span style="font-weight:bold;">${innerHtml}</span>`;
-}
+  const buildItemEndpoint = (itemID: number) => {
+    return `${props.formContext.pageContext.site.serverRelativeUrl}/_api/web/lists/GetByTitle('${props.formContext.list.title}')/items(${itemID})`;
+  };
 
-function spanRed(innerHtml: string): string {
-  return `<span style="color:red;">${innerHtml}</span>`;
-}
+  const getRequestConfig = () => {
+    if (ctx.FormMode === FORM_MODE_NEW) {
+      return {
+        url: `${props.formContext.pageContext.site.serverRelativeUrl}/_api/web/lists/GetByTitle('${props.formContext.list.title}')/items`,
+        method: "POST" as const
+      };
+    }
 
-function link(href: string, label: string): string {
-  return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`;
-}
+    const id = props.formContext.item?.ID as number;
+    return {
+      url: `${props.formContext.pageContext.site.serverRelativeUrl}/_api/web/lists/GetByTitle('${props.formContext.list.title}')/items(${id})`,
+      method: "PATCH" as const
+    };
+  };
 
-function container(innerHtml: string): string {
-  return `
-<table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="border-collapse:collapse;">
-  <tr>
-    <td style="padding:12px 0;">
-      ${innerHtml}
-    </td>
-  </tr>
-</table>`.trim();
-}
+  const waitForPeoplePicker = async (): Promise<boolean> => {
+    let counter = 0;
+    const maxIterations = 16;
+    const intervalMs = 1000;
 
-/* =========================================================
-   SUBJECT BUILDERS
-========================================================= */
+    return new Promise((resolve) => {
+      const intervalID = setInterval(() => {
+        const pplType: PplPicker = { dir: "OUT" };
+        const stillResolving = Boolean(ctx.GlobalPplPicker(pplType));
 
-function subjectSubmitToCcOwner(v: SubmitToCcOwnerVars): string {
-  return `Authorized Requestor Request #${v.requestId} submitted for your approval`;
-}
+        counter++;
 
-function subjectSubmitToEokm(v: SubmitToEokmVars): string {
-  return `Authorized Requestor Request #${v.requestId} submitted by ${v.requesterFullName}`;
-}
+        if (stillResolving === false || counter >= maxIterations) {
+          clearInterval(intervalID);
 
-function subjectApprovedToEokm(v: DecisionEokmVars): string {
-  return `Authorized Requestor Request #${v.requestId} approved`;
-}
+          if (stillResolving === true) {
+            resolve(false);
+            return;
+          }
 
-function subjectRejectedToEokm(v: DecisionEokmVars): string {
-  return `Authorized Requestor Request #${v.requestId} rejected`;
-}
+          resolve(true);
+        }
+      }, intervalMs);
+    });
+  };
 
-/* =========================================================
-   HTML BUILDERS
-========================================================= */
+  const validateForm = async (): Promise<boolean> => {
+    const res: any = ctx.GlobalReturnData();
+    const errorItems = res?.errorItems ?? {};
+    const listData = res?.listData ?? {};
+    const frmData = res?.frmData ?? {};
+    const requiredElements: string[] = res?.requiredItems ?? [];
 
-function renderSubmitToCcOwner(v: SubmitToCcOwnerVars): string {
-  const inner = [
-    p(`Dear ${escapeHtml(v.ccOwnerName)},`),
-    p(
-      `An ${strong(v.requestTypeText)} Authorized Requestor request has been submitted by ${strong(
-        v.requesterFullName
-      )} and is awaiting your approval.`
-    ),
-    p(`Request ID: ${strong(v.requestId)}`),
-    p(`Status: ${spanBold(v.busStatus)}`),
-    p(`Please open the ${link(v.editPageUrl, "form")} to review and approve or reject this request.`),
-    p(`Thank you,`),
-    p(`${spanBold("Knowledge Services Team")}`),
-    pRedItalic(`Please do not reply to this auto-generated email.`)
-  ].join("\n");
+    for (const field of requiredElements) {
+      const value = ctx.FormMode === FORM_MODE_EDIT ? frmData[field] : listData[field];
+      if (value === null || value === undefined || value === "") {
+        alert("Please fill in all required fields");
+        return false;
+      }
+    }
 
-  return container(inner);
-}
+    if (Object.keys(errorItems).length > 0) {
+      alert("Please review highlighted fields and try again!");
+      return false;
+    }
 
-function renderSubmitToEokm(v: SubmitToEokmVars): string {
-  const inner = [
-    p(`Dear Knowledge Services Team,`),
-    p(
-      `An ${strong(v.requestTypeText)} Authorized Requestor request has been submitted by ${strong(
-        v.requesterFullName
-      )}.`
-    ),
-    p(`Request ID: ${strong(v.requestId)}`),
-    p(`Status: ${spanBold(v.busStatus)}`),
-    p(`Please open the ${link(v.editPageUrl, "form")} to review the request details.`),
-    p(`Thank you,`),
-    p(`${spanBold("Knowledge Services Team")}`),
-    pRedItalic(`Please do not reply to this auto-generated email.`)
-  ].join("\n");
+    return true;
+  };
 
-  return container(inner);
-}
+  const uploadAttachments = async (attachments: any[], itemID: number) => {
+    if (!attachments || attachments.length === 0) return [];
 
-function renderApprovedToEokm(v: DecisionEokmVars): string {
-  const inner = [
-    p(`Dear Knowledge Services Team,`),
-    p(
-      `An ${strong(v.requestTypeText)} Authorized Requestor request submitted by ${strong(
-        v.requesterFullName
-      )} has been approved.`
-    ),
-    p(`Request ID: ${strong(v.requestId)}`),
-    p(`Status: ${spanBold(v.busStatus)}`),
-    p(`Please open the ${link(v.editPageUrl, "form")} to review the approved request.`),
-    p(`Thank you,`),
-    p(`${spanBold("Knowledge Services Team")}`),
-    pRedItalic(`Please do not reply to this auto-generated email.`)
-  ].join("\n");
+    const itemUrl = buildItemEndpoint(itemID);
 
-  return container(inner);
-}
+    const headers: HeadersInit = {
+      Accept: "application/json",
+      "Content-Type": "application/octet-stream"
+    };
 
-function renderRejectedToEokm(v: DecisionEokmVars): string {
-  const inner = [
-    p(`Dear Knowledge Services Team,`),
-    p(
-      `An ${strong(v.requestTypeText)} Authorized Requestor request submitted by ${strong(
-        v.requesterFullName
-      )} has been ${spanRed(escapeHtml(v.busStatus))}.`
-    ),
-    p(`Request ID: ${strong(v.requestId)}`),
-    p(`Please open the ${link(v.editPageUrl, "form")} to review the rejected request.`),
-    p(`Thank you,`),
-    p(`${spanBold("Knowledge Services Team")}`),
-    pRedItalic(`Please do not reply to this auto-generated email.`)
-  ].join("\n");
+    const uploads = attachments.map((att) => {
+      const fileUrl = `${itemUrl}/AttachmentFiles/add(FileName='${att.name}')`;
 
-  return container(inner);
-}
-
-/* =========================================================
-   ROUTER
-========================================================= */
-
-export function buildEmail(ctx: EmailRouterContext): EmailPayload[] | null {
-  const editUrl = `https://${window.location.hostname}${ctx.formContext.list.serverRelativeUrl}/EditForm.aspx?ID=${ctx.itemID}`;
-
-  const emails: EmailPayload[] = [];
-  const eokmMailBox =
-    ctx.eokmMailBox?.trim() || "EnterpriseOperationsKnowledgeManagement@amerihealthcaritas.com";
-
-  switch (ctx.status) {
-    case "Submitted": {
-      const eokmVars: SubmitToEokmVars = {
-        requesterFullName: ctx.requesterName,
-        requestTypeText: ctx.requestTypeText,
-        requestId: String(ctx.itemID),
-        editPageUrl: editUrl,
-        busStatus: "Submitted"
+      const apiCall = {
+        url: fileUrl,
+        body: att.content,
+        context: props.formContext
       };
 
-      emails.push({
-        to: [eokmMailBox],
-        subject: subjectSubmitToEokm(eokmVars),
-        html: renderSubmitToEokm(eokmVars)
+      return postSPRestAPI(apiCall, headers);
+    });
+
+    return await Promise.allSettled(uploads);
+  };
+
+  const stripAttachments = (data: Record<string, any>) => {
+    const copy = { ...data };
+    delete copy.attachments;
+    return copy;
+  };
+
+  const saveItem = async (): Promise<ReturnDataProps> => {
+    const { url, method } = getRequestConfig();
+    const raw = ctx.listSubData ?? {};
+    const deepCopy = JSON.parse(JSON.stringify(raw));
+    const dataToSend = stripAttachments(deepCopy);
+
+    const headers: HeadersInit =
+      method === "PATCH"
+        ? {
+            Accept: "application/json;odata.metadata=full",
+            "Content-Type": "application/json;odata.metadata=full",
+            "X-HTTP-Method": "MERGE",
+            "IF-MATCH": "*"
+          }
+        : {
+            Accept: "application/json;odata.metadata=full",
+            "Content-Type": "application/json;odata.metadata=full"
+          };
+
+    const apiCall = {
+      url,
+      body: JSON.stringify(dataToSend),
+      context: props.formContext
+    };
+
+    const result = await postSPRestAPI(apiCall, headers);
+
+    if (result.status !== 201 && result.status !== 204) {
+      throw result;
+    }
+
+    return result;
+  };
+
+  const getPeoplePickerInfo = (
+    pickerId: string,
+    fieldName: string
+  ): PplPickerStorage | null => {
+    const localStorageVar = `${props.formContext.pageContext.web.title}.peoplePickerIds.${fieldName}`;
+    const storedRaw = localStorage.getItem(localStorageVar) ?? "[]";
+    const storedArr = JSON.parse(storedRaw) as any[];
+
+    const checkSPUserEmail =
+      (storedArr.find((x) => x?.EntityData?.SPUserID === pickerId)?.Email as string) ?? null;
+
+    const checkSPUserName =
+      (storedArr.find((x) => x?.EntityData?.SPUserID === pickerId)?.DisplayText as string) ?? null;
+
+    if (checkSPUserEmail && checkSPUserName) {
+      const spUserFullName = `${checkSPUserName.split(", ")[1] ?? ""} ${checkSPUserName.split(", ")[0] ?? ""}`.trim();
+      return {
+        email: checkSPUserEmail,
+        fullName: spUserFullName
+      };
+    }
+
+    return null;
+  };
+
+  const saveTracker = (tracker: RequestTracker) => {
+    ctx.listSubData = {
+      ...ctx.listSubData,
+      RequestTracker: JSON.stringify(tracker)
+    };
+  };
+
+  const addHistory = (tracker: RequestTracker, entry: RequestHistoryEntry) => {
+    tracker.history.push(entry);
+    saveTracker(tracker);
+  };
+
+  const getCostCenterOwner = (): PplPickerStorage | null => {
+    const formData = ctx.FormData as Record<string, any>;
+
+    const ownerObj =
+      formData["Cost_x0020_Center_x0020_Owner"] ??
+      formData["CostCenterOwner"] ??
+      null;
+
+    if (ownerObj?.email && ownerObj?.fullName) {
+      return {
+        email: ownerObj.email,
+        fullName: ownerObj.fullName
+      };
+    }
+
+    if (ownerObj?.secondaryText && ownerObj?.name) {
+      return {
+        email: ownerObj.secondaryText,
+        fullName: ownerObj.name
+      };
+    }
+
+    if (ownerObj?.text && ownerObj?.secondaryText) {
+      return {
+        email: ownerObj.secondaryText,
+        fullName: ownerObj.text
+      };
+    }
+
+    return null;
+  };
+
+  const getCurrentUser = (): UserProps => ctx.curUserInfo;
+
+  const stepHandler = async (): Promise<StepResult> => {
+    const engine = createFlowEngine(processMap);
+    const currentUser = getCurrentUser();
+
+    const rawTracker: RequestTracker =
+      ctx.FormMode !== FORM_MODE_NEW
+        ? JSON.parse(ctx.FormData?.RequestTracker ?? "{}")
+        : ({} as RequestTracker);
+
+    const flowTracker: RequestTracker =
+      rawTracker && Object.keys(rawTracker).length
+        ? {
+            requestor: rawTracker.requestor,
+            history: rawTracker.history ?? []
+          }
+        : {
+            requestor: {
+              name: currentUser.userFullName,
+              email: currentUser.userEmail,
+              spId: currentUser.spID
+            },
+            history: []
+          };
+
+    const lastEntry = flowTracker.history.at(-1);
+
+    const currentStepId: StepId =
+      ctx.FormMode === FORM_MODE_NEW
+        ? processMap.startStepId
+        : ((lastEntry?.stepId as StepId) ?? processMap.startStepId);
+
+    const currentStatusVal: string | null = (ctx.FormData?.Status as string) ?? null;
+
+    let nextStepId: StepId = processMap.startStepId;
+
+    if (ctx.FormMode !== FORM_MODE_NEW) {
+      const nextCandidate = engine.next(currentStepId, currentStatusVal ?? "", {
+        decide: decisionExecuter
       });
 
-      if (!ctx.isCostCenterOwner) {
-        if (!ctx.ccOwnerName || !ctx.ccOwnerEmail) {
-          return null;
-        }
+      if (!nextCandidate) return { ok: true };
 
-        const ccOwnerVars: SubmitToCcOwnerVars = {
-          ccOwnerName: ctx.ccOwnerName,
-          ccOwnerEmail: ctx.ccOwnerEmail,
-          requesterFullName: ctx.requesterName,
-          requestTypeText: ctx.requestTypeText,
-          requestId: String(ctx.itemID),
-          editPageUrl: editUrl,
-          busStatus: "Submitted"
+      nextStepId = nextCandidate as StepId;
+    }
+
+    if (lastEntry?.stepId === nextStepId) {
+      return { ok: true };
+    }
+
+    switch (nextStepId) {
+      case "P100": {
+        const tracker: RequestTracker = {
+          requestor: {
+            name: currentUser.userFullName,
+            email: currentUser.userEmail,
+            spId: currentUser.spID
+          },
+          history: []
         };
 
-        emails.push({
-          to: [ctx.ccOwnerEmail],
-          subject: subjectSubmitToCcOwner(ccOwnerVars),
-          html: renderSubmitToCcOwner(ccOwnerVars)
-        });
+        ctx.listSubData = {
+          ...ctx.listSubData,
+          RequestTracker: JSON.stringify(tracker),
+          Title: currentUser.userFullName
+        };
+
+        const ccOwner = getCostCenterOwner();
+        const isCostCenterOwner =
+          !!ccOwner?.email &&
+          ccOwner.email.toLowerCase() === currentUser.userEmail.toLowerCase();
+
+        const emailCtx: EmailRouterContext = {
+          status: isCostCenterOwner ? "Approved" : "Submitted",
+          requesterName: currentUser.userFullName,
+          requesterEmail: currentUser.userEmail,
+          requestTypeText: props.selectedType,
+          itemID: props.formContext.item?.ID ?? 0,
+          formContext: props.formContext,
+          ccOwnerName: ccOwner?.fullName,
+          ccOwnerEmail: ccOwner?.email,
+          isCostCenterOwner
+        };
+
+        return { ok: true, value: emailCtx };
       }
 
-      return emails;
+      case "P300": {
+        return { ok: true };
+      }
+
+      case "P400": {
+        addHistory(flowTracker, {
+          stepId: "P400",
+          status: "Approved",
+          timestamp: new Date().toISOString(),
+          modifiedBy: currentUser.userFullName,
+          requesterName: flowTracker.requestor.name,
+          requesterEmail: flowTracker.requestor.email
+        });
+
+        ctx.listSubData = {
+          ...ctx.listSubData,
+          Status: "Approved"
+        };
+
+        const emailCtx: EmailRouterContext = {
+          status: "Approved",
+          requesterName: flowTracker.requestor.name,
+          requesterEmail: flowTracker.requestor.email,
+          requestTypeText: props.selectedType,
+          itemID: props.formContext.item?.ID ?? 0,
+          formContext: props.formContext
+        };
+
+        return { ok: true, value: emailCtx };
+      }
+
+      case "P600": {
+        addHistory(flowTracker, {
+          stepId: "P600",
+          status: "Rejected",
+          timestamp: new Date().toISOString(),
+          modifiedBy: currentUser.userFullName,
+          requesterName: flowTracker.requestor.name,
+          requesterEmail: flowTracker.requestor.email
+        });
+
+        ctx.listSubData = {
+          ...ctx.listSubData,
+          Status: "Rejected"
+        };
+
+        const emailCtx: EmailRouterContext = {
+          status: "Rejected",
+          requesterName: flowTracker.requestor.name,
+          requesterEmail: flowTracker.requestor.email,
+          requestTypeText: props.selectedType,
+          itemID: props.formContext.item?.ID ?? 0,
+          formContext: props.formContext
+        };
+
+        return { ok: true, value: emailCtx };
+      }
+
+      default:
+        return { ok: true };
     }
-
-    case "Approved": {
-      const approvedVars: DecisionEokmVars = {
-        requesterFullName: ctx.requesterName,
-        requestTypeText: ctx.requestTypeText,
-        requestId: String(ctx.itemID),
-        editPageUrl: editUrl,
-        busStatus: "Approved"
-      };
-
-      emails.push({
-        to: [eokmMailBox],
-        subject: subjectApprovedToEokm(approvedVars),
-        html: renderApprovedToEokm(approvedVars)
-      });
-
-      return emails;
-    }
-
-    case "Rejected": {
-      const rejectedVars: DecisionEokmVars = {
-        requesterFullName: ctx.requesterName,
-        requestTypeText: ctx.requestTypeText,
-        requestId: String(ctx.itemID),
-        editPageUrl: editUrl,
-        busStatus: "Rejected"
-      };
-
-      emails.push({
-        to: [eokmMailBox],
-        subject: subjectRejectedToEokm(rejectedVars),
-        html: renderRejectedToEokm(rejectedVars)
-      });
-
-      return emails;
-    }
-
-    default:
-      return null;
-  }
-}
-
-/* =========================================================
-   FLOW SENDER
-========================================================= */
-
-export async function sendEmail(
-  payload: EmailPayload[],
-  ctx: FormCustomizerContext
-): Promise<FlowResult<FlowBody>> {
-  const flowUrl =
-    "https://default04afd16a7254e2f9260fce3985944.dc.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/YOUR_FLOW_URL_HERE/triggers/manual/paths/invoke?api-version=2016-10-01";
-
-  const requestHeaders = {
-    accept: "application/json",
-    "content-type": "application/json"
   };
 
-  const httpClientOptions: IHttpClientOptions = {
-    body: JSON.stringify(payload),
-    headers: requestHeaders
+  const handleSubmit = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+
+    if (ctx.FormMode === FORM_MODE_DISPLAY) return;
+
+    props.OnSubmit(true);
+    showSpinner("Getting info...");
+
+    try {
+      const ppOk = await waitForPeoplePicker();
+      if (!ppOk) {
+        alert("Issue resolving PeoplePicker. Please try again");
+        endSubmitUI();
+        return;
+      }
+
+      showSpinner("Validating...");
+      const valid = await validateForm();
+      if (!valid) {
+        endSubmitUI();
+        return;
+      }
+
+      const stepHandlerOk = await stepHandler();
+      if (!stepHandlerOk.ok) {
+        endSubmitUI();
+        return;
+      }
+
+      showSpinner("Saving...");
+      const saveResult = await saveItem();
+
+      let itemId = props.formContext.item?.ID as number;
+
+      if (saveResult.status === 201) {
+        itemId = saveResult.data?.Id ?? saveResult.data?.ID ?? itemId;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(ctx.formData ?? {}, "attachments")) {
+        const sorted = await uploadAttachments(ctx.formData.attachments, itemId);
+        const anyFailed = sorted.some((x: any) => x.status === "rejected");
+        if (anyFailed) {
+          alert("Saved, however attachments had an issue.");
+        }
+      }
+
+      if (stepHandlerOk.value) {
+        const emailContext: EmailRouterContext = {
+          ...stepHandlerOk.value,
+          itemID: itemId
+        };
+
+        const build: EmailPayload[] | null = buildEmail(emailContext);
+        if (build !== null) {
+          const resultEmail: FlowResult<FlowBody> = await sendEmail(build, props.formContext);
+          console.log(resultEmail);
+        }
+      }
+
+      alert(
+        saveResult.status === 204
+          ? "Your changes are successfully submitted"
+          : "Thank you for submitting Authorized Requestor"
+      );
+
+      endSubmitUI();
+    } catch (error: any) {
+      alert(error?.statusText ?? error);
+      endSubmitUI();
+    }
   };
 
-  try {
-    const response: HttpClientResponse = await ctx.httpClient.post(
-      flowUrl,
-      HttpClient.configurations.v1,
-      httpClientOptions
-    );
+  React.useEffect(() => {
+    setIsDisabled(props.submitting);
+  }, [props.submitting]);
 
-    const raw = await response.text();
-    const body = safeJsonParse<FlowBody>(raw);
+  React.useEffect(() => {
+    if (ctx.FormMode === FORM_MODE_DISPLAY) {
+      setIsHidden(true);
+    } else {
+      const decision = evaluateFieldRules(btnId, {
+        formMode: ctx.FormMode,
+        formData: ctx.FormData,
+        curUserInfo: ctx.curUserInfo,
+        formConfigJson: ctx.formRules
+      });
 
-    return {
-      ok: response.ok,
-      status: response.status,
-      statusText: response.statusText,
-      raw,
-      body
-    };
-  } catch (e: any) {
-    return {
-      ok: false,
-      status: 0,
-      statusText: "Client/Network error",
-      error: e?.message ?? String(e)
-    };
-  }
-}
+      if (decision.isDisabled !== undefined) {
+        setIsDisabled(decision.isDisabled);
+      }
 
-function safeJsonParse<T>(text: string): T | undefined {
-  const t = (text ?? "").trim();
+      if (decision.isHidden !== undefined) {
+        setIsHidden(decision.isHidden);
+      } else {
+        setIsHidden(false);
+      }
+    }
+  }, [ctx]);
 
-  if (!t) return undefined;
-  if (!(t.startsWith("{") || t.startsWith("["))) return undefined;
+  return (
+    <>
+      <div
+        className="fieldClass"
+        style={{ display: isHidden ? "none" : "block", textAlign: "right" }}
+      >
+        <Button
+          appearance="primary"
+          id={btnId}
+          title="Submit"
+          onClick={handleSubmit}
+          {...(isDisabled && { disabled: true })}
+        >
+          Submit
+        </Button>
+      </div>
 
-  try {
-    return JSON.parse(t) as T;
-  } catch {
-    return undefined;
-  }
+      <div
+        className="spinner-container"
+        style={{ display: spinnerHidden ? "none" : "block" }}
+      >
+        <Spinner labelPosition="after" label={spinnerLabel} />
+      </div>
+    </>
+  );
 }
