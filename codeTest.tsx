@@ -1,9 +1,11 @@
 import * as React from "react";
+import { useEffect, useState } from "react";
 import { Button, Spinner } from "@fluentui/react-components";
 import { DynamicFormContext } from "@spfx-monorepo/shared-library/dist/cjs/components/DynamicFormContext";
 import { postSPRestAPI, ReturnDataProps } from "@spfx-monorepo/shared-library/dist/cjs/Utils/postSPRestAPI";
+import { evaluateFieldRules } from "@spfx-monorepo/shared-library/dist/cjs/Utils/formRulesEngine";
 import { FormCustomizerContext } from "@microsoft/sp-listview-extensibility";
-import type { UserProps } from "@spfx-monorepo/shared-library/dist/cjs/Utils/types";
+
 import {
   buildEmail,
   EmailPayload,
@@ -11,8 +13,7 @@ import {
   FlowBody,
   FlowResult,
   sendEmail
-} from "../flowscaffold/email";
-import { evaluateFieldRules } from "@spfx-monorepo/shared-library/dist/cjs/Utils/formRulesEngine";
+} from "../flowScaffold/email";
 
 interface ButtonProps {
   OnSubmit: (data: boolean) => void;
@@ -34,10 +35,10 @@ type StepResult = {
 export default function SaveComponent(props: ButtonProps): JSX.Element {
   const ctx = DynamicFormContext();
 
-  const [isHidden, setIsHidden] = React.useState<boolean>(false);
-  const [isDisabled, setIsDisabled] = React.useState<boolean>(false);
-  const [spinnerHidden, setSpinnerHidden] = React.useState<boolean>(true);
-  const [spinnerLabel, setSpinnerLabel] = React.useState<string>("");
+  const [isHidden, setIsHidden] = useState<boolean>(false);
+  const [isDisabled, setIsDisabled] = useState<boolean>(false);
+  const [spinnerHidden, setSpinnerHidden] = useState<boolean>(true);
+  const [spinnerLabel, setSpinnerLabel] = useState<string>("");
 
   const btnId = "btnSubmit";
 
@@ -45,17 +46,17 @@ export default function SaveComponent(props: ButtonProps): JSX.Element {
   const FORM_MODE_EDIT = 6;
   const FORM_MODE_NEW = 8;
 
-  const showSpinner = (label: string) => {
+  const showSpinner = (label: string): void => {
     setSpinnerLabel(label);
     setSpinnerHidden(false);
   };
 
-  const hideSpinner = () => {
+  const hideSpinner = (): void => {
     setSpinnerLabel("");
     setSpinnerHidden(true);
   };
 
-  const endSubmitUI = () => {
+  const endSubmitUI = (): void => {
     props.OnSubmit(false);
     hideSpinner();
   };
@@ -64,11 +65,11 @@ export default function SaveComponent(props: ButtonProps): JSX.Element {
     return `${props.formContext.pageContext.site.serverRelativeUrl}/_api/web/lists/GetByTitle('${props.formContext.list.title}')/items(${itemID})`;
   };
 
-  const getRequestConfig = () => {
+  const getRequestConfig = (): { uri: string; method: "POST" | "PATCH" } => {
     if (ctx.FormMode === FORM_MODE_NEW) {
       return {
         uri: `${props.formContext.pageContext.site.serverRelativeUrl}/_api/web/lists/GetByTitle('${props.formContext.list.title}')/items`,
-        method: "POST" as const
+        method: "POST"
       };
     }
 
@@ -76,7 +77,7 @@ export default function SaveComponent(props: ButtonProps): JSX.Element {
 
     return {
       uri: `${props.formContext.pageContext.site.serverRelativeUrl}/_api/web/lists/GetByTitle('${props.formContext.list.title}')/items(${id})`,
-      method: "PATCH" as const
+      method: "PATCH"
     };
   };
 
@@ -94,13 +95,7 @@ export default function SaveComponent(props: ButtonProps): JSX.Element {
 
         if (stillResolving === false || counter >= maxIterations) {
           clearInterval(intervalID);
-
-          if (stillResolving === true) {
-            resolve(false);
-            return;
-          }
-
-          resolve(true);
+          resolve(!stillResolving);
         }
       }, intervalMs);
     });
@@ -156,7 +151,7 @@ export default function SaveComponent(props: ButtonProps): JSX.Element {
     return await Promise.allSettled(uploads);
   };
 
-  const stripAttachments = (data: Record<string, any>) => {
+  const stripAttachments = (data: Record<string, any>): Record<string, any> => {
     const copy = { ...data };
     delete copy.attachments;
     return copy;
@@ -229,10 +224,8 @@ export default function SaveComponent(props: ButtonProps): JSX.Element {
     return null;
   };
 
-  const getCurrentUser = (): UserProps => ctx.curUserInfo;
-
   const stepHandler = async (): Promise<StepResult> => {
-    const currentUser = getCurrentUser();
+    const currentUser = ctx.curUserInfo;
     const ccOwner = getCostCenterOwner();
 
     if (ctx.FormMode === FORM_MODE_NEW) {
@@ -277,8 +270,8 @@ export default function SaveComponent(props: ButtonProps): JSX.Element {
 
       const emailCtx: EmailRouterContext = {
         status: "Approved",
-        requesterName: currentUser.userFullName,
-        requesterEmail: currentUser.userEmail,
+        requesterName: ctx.curUserInfo.userFullName,
+        requesterEmail: ctx.curUserInfo.userEmail,
         requestTypeText: props.selectedType,
         itemID: props.formContext.item?.ID ?? 0,
         formContext: props.formContext
@@ -295,8 +288,8 @@ export default function SaveComponent(props: ButtonProps): JSX.Element {
 
       const emailCtx: EmailRouterContext = {
         status: "Rejected",
-        requesterName: currentUser.userFullName,
-        requesterEmail: currentUser.userEmail,
+        requesterName: ctx.curUserInfo.userFullName,
+        requesterEmail: ctx.curUserInfo.userEmail,
         requestTypeText: props.selectedType,
         itemID: props.formContext.item?.ID ?? 0,
         formContext: props.formContext
@@ -390,11 +383,11 @@ export default function SaveComponent(props: ButtonProps): JSX.Element {
     }
   };
 
-  React.useEffect(() => {
+  useEffect(() => {
     setIsDisabled(props.submitting);
   }, [props.submitting]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (ctx.FormMode === FORM_MODE_DISPLAY) {
       setIsHidden(true);
     } else {
@@ -421,7 +414,10 @@ export default function SaveComponent(props: ButtonProps): JSX.Element {
     <>
       <div
         className="fieldClass"
-        style={{ display: isHidden ? "none" : "block", textAlign: "right" }}
+        style={{
+          display: isHidden ? "none" : "block",
+          textAlign: "right"
+        }}
       >
         <Button
           appearance="primary"
@@ -436,9 +432,12 @@ export default function SaveComponent(props: ButtonProps): JSX.Element {
 
       <div
         className="spinner-container"
-        style={{ display: spinnerHidden ? "none" : "block" }}
+        style={{
+          display: spinnerHidden ? "none" : "block"
+        }}
       >
         <Spinner labelPosition="after" label={spinnerLabel} />
       </div>
     </>
   );
+}
