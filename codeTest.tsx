@@ -1,13 +1,21 @@
-public render(): void {
-  const element: React.ReactElement<any> = React.createElement(
-    AuthorizedRequestor as any,
-    {
-      context: this.context,
-      displayMode: this.displayMode,
-      onSave: this._onSave,
-      onClose: this._onClose
-    }
-  );
+import type { DecisionMap } from "./types";
 
-  ReactDOM.render(element, this.domElement);
-}
+export const decisionMap: DecisionMap = {
+  steps: {
+    P200: {
+      decisionStepId: "P200",
+      Yes: [
+        { id: "P400", statusText: "Approved" }
+      ],
+      No: "P300"
+    },
+
+    P300: {
+      decisionStepId: "P300",
+      Yes: [
+        { id: "P400", statusText: "Approved" }
+      ],
+      No: "P600"
+    }
+  }
+};
