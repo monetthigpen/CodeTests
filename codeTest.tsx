@@ -5,15 +5,21 @@ export const decisionMap: DecisionMap = {
     P200: {
       decisionStepId: "P200",
       Yes: [
-        { id: "P400", statusText: "Approved" }
+        {
+          id: "P400",
+          statusText: "Approved"
+        }
       ],
-      No: "P300"
+      No: "P600"
     },
 
     P300: {
       decisionStepId: "P300",
       Yes: [
-        { id: "P400", statusText: "Approved" }
+        {
+          id: "P400",
+          statusText: "Approved"
+        }
       ],
       No: "P600"
     }
