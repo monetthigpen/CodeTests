@@ -1,12 +1,12 @@
-import * as React from "react";
-import { useEffect, useState } from "react";
-import { Button, Spinner } from "@fluentui/react-components";
+const element: React.ReactElement<IAuthorizedRequestorProps> =
+  React.createElement(AuthorizedRequestor, {
+    context: this.context,
+    displayMode: this.displayMode,
+    onSave: this._onSave,
+    onClose: this._onClose
+  });
 
-import { DynamicFormContext } from "@spfx-monorepo/shared-library/dist/cjs/components/DynamicFormContext";
+ReactDOM.render(element, this.domElement);
 
-import postSPRestAPI from "@spfx-monorepo/shared-library/dist/cjs/Utils/postSPRestAPI";
-import type { ReturnDataProps } from "@spfx-monorepo/shared-library/dist/cjs/Utils/postSPRestAPI";
-
-import { evaluateFieldRules } from "@spfx-monorepo/shared-library/dist/cjs/Utils/formRulesEngine";
-
-import { FormCustomizerContext } from "@microsoft/sp-listview-extensibility";
+import AuthorizedRequestor from "./components/AuthorizedRequestor";
+import { IAuthorizedRequestorProps } from "./components/IAuthorizedRequestorProps";
