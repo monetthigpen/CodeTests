@@ -5,6 +5,8 @@ export type StatusText =
   | 'Approved'
   | 'Rejected';
 
+export type StatusChoice = StatusText;
+
 export type ShapeType = 'Start' | 'Process' | 'Decision' | 'End';
 
 export type FlowStep = {
@@ -20,3 +22,12 @@ export type ProcessMap = {
   startStepId: StepId;
   steps: Record<StepId, FlowStep>;
 };
+
+export type DecisionStep = FlowStep;
+
+export type DecisionMap = Record<StepId, DecisionStep>;
+
+export type DecisionResolver = (
+  currentStatus: StatusChoice,
+  nextStatus?: StatusChoice
+) => StepId;
