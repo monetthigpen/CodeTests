@@ -28,13 +28,80 @@ export type ProcessMap = {
   steps: Record<StepId, FlowStep>;
 };
 
-export type DecisionStep = FlowStep;
+export type DecisionTarget = {
+  id: StepId;
+  statusText: StatusText;
+};
+
+export type DecisionStep = {
+  decisionStepId: DecisionStepId;
+  Yes: DecisionTarget[];
+  No: StepId;
+};
 
 export type DecisionMap = {
-  steps: Record<DecisionStepId, DecisionStep>;
+  steps: Partial<Record<DecisionStepId, DecisionStep>>;
 };
 
 export type DecisionResolver = (
-  currentStatus: StatusChoice,
-  nextStatus?: StatusChoice
-) => DecisionStepId;
+  step: FlowStep,
+  statusValue: string
+) => StepId;
+
+
+
+
+import type { DecisionMap } from './types';
+
+export const decisionMap: DecisionMap = {
+  steps: {
+    P100: {
+      decisionStepId: 'P100',
+      Yes: [
+        {
+          id: 'P200',
+          statusText: 'Approved'
+        },
+        {
+          id: 'P300',
+          statusText: 'Rejected'
+        }
+      ],
+      No: 'P100'
+    }
+  }
+};
+
+
+
+
+import type { StepId, DecisionStepId, FlowStep } from './types';
+import { decisionMap } from './decisionMap';
+
+export const decisionExecuter = (
+  step: FlowStep,
+  statusValue: string
+): StepId => {
+  const rule = decisionMap.steps[step.id as DecisionStepId];
+
+  if (!rule) {
+    throw new Error(`No decision rule found for step ${step.id}`);
+  }
+
+  const candidate = rule.Yes.find(
+    (t) => t.statusText === statusValue
+  );
+
+  if (candidate) {
+    return candidate.id;
+  }
+
+  return rule.No;
+};
+
+
+
+
+import type { DecisionResolver, FlowStep, ProcessMap, StatusChoice, StepId } from './types';
+
+const next = (stepId: StepId, statusValue: StatusChoice, options: TransitionOptions = {}): StepId | null => {
