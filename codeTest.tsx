@@ -2,14 +2,15 @@
   "$schema": "./formRules.schema.json",
   "title": "Authorized Requestors Form Rules",
   "sourceType": "LIST",
-  "_comment": "Simplified Authorized Requestors rules. No dependent status hide/show logic.",
   "items": [
     {
       "formMode": 8,
-      "_comment": "New Form Mode",
+      "_comment": "NEW FORM",
       "items": {
         "globalDisableFields": {
-          "items": []
+          "items": [
+            "Business_x0020_Area"
+          ]
         },
         "globalHiddenFields": {
           "items": [
@@ -18,125 +19,39 @@
             "Access_x0020_Granted"
           ]
         },
-        "userPermsBased": {
-          "ownerGroup": {
-            "priority": 1,
-            "groupName": "Request Form Owners",
-            "defaultVisible": [
-              "Authorized_x0020_Requestor",
-              "Document_x0020_Type",
-              "Signer",
-              "Comments",
-              "Cost_x0020_Center_x0020_Owner_x0",
-              "Business_x0020_Area",
-              "Cost_x0020_Center",
-              "btnSubmit",
-              "attachments"
-            ],
-            "defaultEditable": [
-              "Authorized_x0020_Requestor",
-              "Document_x0020_Type",
-              "Signer",
-              "Comments",
-              "Cost_x0020_Center_x0020_Owner_x0",
-              "Business_x0020_Area",
-              "Cost_x0020_Center",
-              "btnSubmit",
-              "attachments"
-            ]
-          },
-          "internalUsers": {
-            "priority": 2,
-            "groupName": "Knowledge Management Internal Users",
-            "defaultVisible": [
-              "Authorized_x0020_Requestor",
-              "Document_x0020_Type",
-              "Signer",
-              "Comments",
-              "Cost_x0020_Center_x0020_Owner_x0",
-              "Business_x0020_Area",
-              "Cost_x0020_Center",
-              "btnSubmit",
-              "attachments"
-            ],
-            "defaultEditable": [
-              "Authorized_x0020_Requestor",
-              "Document_x0020_Type",
-              "Signer",
-              "Comments",
-              "Cost_x0020_Center_x0020_Owner_x0",
-              "Business_x0020_Area",
-              "Cost_x0020_Center",
-              "btnSubmit",
-              "attachments"
-            ]
-          },
-          "externalUsers": {
-            "priority": 3,
-            "defaultVisible": [
-              "Authorized_x0020_Requestor",
-              "Document_x0020_Type",
-              "Signer",
-              "Comments",
-              "Cost_x0020_Center_x0020_Owner_x0",
-              "Business_x0020_Area",
-              "Cost_x0020_Center",
-              "btnSubmit",
-              "attachments"
-            ],
-            "defaultEditable": [
-              "Authorized_x0020_Requestor",
-              "Document_x0020_Type",
-              "Signer",
-              "Comments",
-              "Cost_x0020_Center_x0020_Owner_x0",
-              "Business_x0020_Area",
-              "Cost_x0020_Center",
-              "btnSubmit",
-              "attachments"
-            ]
-          }
-        },
         "autoPopulate": {
           "items": [
             {
+              "_comment": "Set default status",
               "when": {
                 "field": "Status",
-                "equals": [
-                  ""
-                ]
+                "equals": [""]
               },
               "set": {
                 "field": "Status",
                 "value": "Submitted"
               }
-            }
-          ]
-        }
-      }
-    },
-    {
-      "formMode": 6,
-      "_comment": "Edit Form Mode",
-      "items": {
-        "globalDisableFields": {
-          "items": [
-            "Title"
-          ]
-        },
-        "globalHiddenFields": {
-          "items": [
-            "Title"
-          ]
-        },
-        "finalState": {
-          "items": [
+            },
             {
-              "fieldName": "Status",
-              "fieldValues": [
-                "Approved",
-                "Rejected"
-              ]
+              "_comment": "Map Cost Center → Business Area",
+              "when": {
+                "field": "Cost_x0020_Center",
+                "equals": ["REPLACE_CC_1"]
+              },
+              "set": {
+                "field": "Business_x0020_Area",
+                "value": "REPLACE_AREA_1"
+              }
+            },
+            {
+              "when": {
+                "field": "Cost_x0020_Center",
+                "equals": ["REPLACE_CC_2"]
+              },
+              "set": {
+                "field": "Business_x0020_Area",
+                "value": "REPLACE_AREA_2"
+              }
             }
           ]
         },
@@ -146,27 +61,22 @@
             "groupName": "Request Form Owners",
             "defaultVisible": [
               "Authorized_x0020_Requestor",
+              "Cost_x0020_Center",
+              "Business_x0020_Area",
               "Document_x0020_Type",
               "Signer",
               "Comments",
               "Cost_x0020_Center_x0020_Owner_x0",
-              "Status",
-              "Access_x0020_Granted",
-              "Business_x0020_Area",
-              "Cost_x0020_Center",
               "btnSubmit",
               "attachments"
             ],
             "defaultEditable": [
               "Authorized_x0020_Requestor",
+              "Cost_x0020_Center",
               "Document_x0020_Type",
               "Signer",
               "Comments",
               "Cost_x0020_Center_x0020_Owner_x0",
-              "Status",
-              "Access_x0020_Granted",
-              "Business_x0020_Area",
-              "Cost_x0020_Center",
               "btnSubmit",
               "attachments"
             ]
@@ -176,27 +86,22 @@
             "groupName": "Knowledge Management Internal Users",
             "defaultVisible": [
               "Authorized_x0020_Requestor",
+              "Cost_x0020_Center",
+              "Business_x0020_Area",
               "Document_x0020_Type",
               "Signer",
               "Comments",
               "Cost_x0020_Center_x0020_Owner_x0",
-              "Status",
-              "Access_x0020_Granted",
-              "Business_x0020_Area",
-              "Cost_x0020_Center",
               "btnSubmit",
               "attachments"
             ],
             "defaultEditable": [
               "Authorized_x0020_Requestor",
+              "Cost_x0020_Center",
               "Document_x0020_Type",
               "Signer",
               "Comments",
               "Cost_x0020_Center_x0020_Owner_x0",
-              "Status",
-              "Access_x0020_Granted",
-              "Business_x0020_Area",
-              "Cost_x0020_Center",
               "btnSubmit",
               "attachments"
             ]
@@ -205,23 +110,118 @@
             "priority": 3,
             "defaultVisible": [
               "Authorized_x0020_Requestor",
+              "Cost_x0020_Center",
+              "Business_x0020_Area",
               "Document_x0020_Type",
               "Signer",
               "Comments",
               "Cost_x0020_Center_x0020_Owner_x0",
-              "Business_x0020_Area",
-              "Cost_x0020_Center",
               "btnSubmit",
               "attachments"
             ],
             "defaultEditable": [
               "Authorized_x0020_Requestor",
+              "Cost_x0020_Center",
               "Document_x0020_Type",
               "Signer",
               "Comments",
               "Cost_x0020_Center_x0020_Owner_x0",
-              "Business_x0020_Area",
+              "btnSubmit",
+              "attachments"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "formMode": 6,
+      "_comment": "EDIT FORM",
+      "items": {
+        "globalDisableFields": {
+          "items": [
+            "Title",
+            "Business_x0020_Area"
+          ]
+        },
+        "userPermsBased": {
+          "ownerGroup": {
+            "priority": 1,
+            "groupName": "Request Form Owners",
+            "defaultVisible": [
+              "Authorized_x0020_Requestor",
               "Cost_x0020_Center",
+              "Business_x0020_Area",
+              "Document_x0020_Type",
+              "Signer",
+              "Comments",
+              "Cost_x0020_Center_x0020_Owner_x0",
+              "Status",
+              "Access_x0020_Granted",
+              "btnSubmit",
+              "attachments"
+            ],
+            "defaultEditable": [
+              "Authorized_x0020_Requestor",
+              "Cost_x0020_Center",
+              "Document_x0020_Type",
+              "Signer",
+              "Comments",
+              "Cost_x0020_Center_x0020_Owner_x0",
+              "Status",
+              "Access_x0020_Granted",
+              "btnSubmit",
+              "attachments"
+            ]
+          },
+          "internalUsers": {
+            "priority": 2,
+            "groupName": "Knowledge Management Internal Users",
+            "defaultVisible": [
+              "Authorized_x0020_Requestor",
+              "Cost_x0020_Center",
+              "Business_x0020_Area",
+              "Document_x0020_Type",
+              "Signer",
+              "Comments",
+              "Cost_x0020_Center_x0020_Owner_x0",
+              "Status",
+              "Access_x0020_Granted",
+              "btnSubmit",
+              "attachments"
+            ],
+            "defaultEditable": [
+              "Authorized_x0020_Requestor",
+              "Cost_x0020_Center",
+              "Document_x0020_Type",
+              "Signer",
+              "Comments",
+              "Cost_x0020_Center_x0020_Owner_x0",
+              "Status",
+              "Access_x0020_Granted",
+              "btnSubmit",
+              "attachments"
+            ]
+          },
+          "externalUsers": {
+            "priority": 3,
+            "defaultVisible": [
+              "Authorized_x0020_Requestor",
+              "Cost_x0020_Center",
+              "Business_x0020_Area",
+              "Document_x0020_Type",
+              "Signer",
+              "Comments",
+              "Cost_x0020_Center_x0020_Owner_x0",
+              "btnSubmit",
+              "attachments"
+            ],
+            "defaultEditable": [
+              "Authorized_x0020_Requestor",
+              "Cost_x0020_Center",
+              "Document_x0020_Type",
+              "Signer",
+              "Comments",
+              "Cost_x0020_Center_x0020_Owner_x0",
               "btnSubmit",
               "attachments"
             ]
@@ -231,14 +231,11 @@
     },
     {
       "formMode": 4,
-      "_comment": "View Form Mode",
+      "_comment": "VIEW FORM",
       "items": {
         "globalDisableFields": {
-          "items": []
-        },
-        "globalHiddenFields": {
           "items": [
-            "Title"
+            "Business_x0020_Area"
           ]
         },
         "userPermsBased": {
@@ -247,14 +244,14 @@
             "groupName": "Request Form Owners",
             "defaultVisible": [
               "Authorized_x0020_Requestor",
+              "Cost_x0020_Center",
+              "Business_x0020_Area",
               "Document_x0020_Type",
               "Signer",
               "Comments",
               "Cost_x0020_Center_x0020_Owner_x0",
               "Status",
               "Access_x0020_Granted",
-              "Business_x0020_Area",
-              "Cost_x0020_Center",
               "attachments"
             ]
           },
@@ -263,14 +260,14 @@
             "groupName": "Knowledge Management Internal Users",
             "defaultVisible": [
               "Authorized_x0020_Requestor",
+              "Cost_x0020_Center",
+              "Business_x0020_Area",
               "Document_x0020_Type",
               "Signer",
               "Comments",
               "Cost_x0020_Center_x0020_Owner_x0",
               "Status",
               "Access_x0020_Granted",
-              "Business_x0020_Area",
-              "Cost_x0020_Center",
               "attachments"
             ]
           },
@@ -278,12 +275,12 @@
             "priority": 3,
             "defaultVisible": [
               "Authorized_x0020_Requestor",
+              "Cost_x0020_Center",
+              "Business_x0020_Area",
               "Document_x0020_Type",
               "Signer",
               "Comments",
               "Cost_x0020_Center_x0020_Owner_x0",
-              "Business_x0020_Area",
-              "Cost_x0020_Center",
               "attachments"
             ]
           }
