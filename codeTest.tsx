@@ -1,14 +1,19 @@
 const normalizedCreateOpenDB = createOpenDB?.map((db: any) => ({
   ...db,
-  listData: db.listData?.map((contentType: any) => ({
-    ...contentType,
-    columns: contentType.columns?.map((col: any) => {
-      if (col.type === "user") {
+  listData: db.listData?.map((item: any) => ({
+    ...item,
+    columns: item.columns?.map((col: any) => {
+      if (
+        col.name === "Authorized_x0020_Requestor" ||
+        col.displayName === "Authorized Requestor"
+      ) {
         return {
           ...col,
-          TypeAsString: "User",
-          FieldTypeKind: 20,
-          TypeDisplayName: "Person or Group"
+          type: "user",
+          personOrGroup: {
+            ...col.personOrGroup,
+            allowMultipleSelection: false
+          }
         };
       }
 
@@ -17,22 +22,3 @@ const normalizedCreateOpenDB = createOpenDB?.map((db: any) => ({
   }))
 }));
 
-
-
-alldbsInfo={normalizedCreateOpenDB}
-
-
-<DynamicFormKS
-  alldbsInfo={normalizedCreateOpenDB}
-  context={props.context}
-  displayMode={props.displayMode}
-  contentTypeId={props.context.contentType.id}
-  baseSourceType={sourceType}
-  attachment={true}
-  saveButton={SaveComponent}
-  formRules={formRules}
-  Header={<HeaderComponent />}
-  label="Authorized Requestors"
-  onSave={props.onSave}
-  onClose={props.onClose}
-/>
